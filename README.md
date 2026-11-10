@@ -37,7 +37,9 @@ Rust standard library and the Windows API bindings.
    Registration without elevation fails with `0x8002801C`, because the decoder writes to
    `HKEY_CLASSES_ROOT`.
 
-4. Restart File Explorer so it picks up the new decoder:
+4. Registration broadcasts `SHChangeNotify(SHCNE_ASSOCCHANGED)`, so the shell drops cached
+   "unknown type" icons for `.jxl`. If an already-open File Explorer window still shows them,
+   restart it:
 
    ```pwsh
    taskkill /f /im explorer.exe; start explorer.exe
