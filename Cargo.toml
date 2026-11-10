@@ -22,7 +22,9 @@ windows = { version = "0.58", features = [
     "Win32_UI_Shell",
 ] }
 windows-core = "0.58"
-jxl = { git = "https://github.com/libjxl/jxl-rs" }
+thiserror = "2.0"
+# Pinned so the decoder API this crate codes against cannot drift underneath CI.
+jxl = { git = "https://github.com/libjxl/jxl-rs", rev = "87620c4f566a7204865b3bcdc160033114a9a253" }
 
 [profile.release]
 opt-level = 3

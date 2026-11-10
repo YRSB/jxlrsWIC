@@ -2,13 +2,15 @@ name: CI
 
 on:
   push:
-    branches: [ "main", "prototype/**" ]
+    branches: ["main", "prototype/**", "implement/**"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
   workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
+  # Database fixtures and decoder tests must fail loudly, never skip, in CI.
+  JXLRS_REQUIRE_COM: "1"
 
 jobs:
   check-format:
@@ -57,18 +59,31 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - name: Run tests (x86_64 native host)
+      - name: Run unit tests (x86_64 native host)
         if: matrix.run_tests
-        run: cargo test --target ${{ matrix.target }} --verbose
+        run: cargo test --target ${{ matrix.target }} --lib --verbose
 
       - name: Build release cdylib
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Verify COM registration with regsvr32 (x86_64)
+      - name: Compile integration test binaries
+        if: matrix.run_tests
+        run: cargo test --target ${{ matrix.target }} --test wic_com_e2e --no-run --verbose
+
+      - name: Register decoder, run WIC end-to-end suite, unregister
         if: matrix.run_tests
         shell: pwsh
         run: |
           $dllPath = (Resolve-Path "target/${{ matrix.target }}/release/jxlrs_wic.dll").Path
+          $testExe = Get-ChildItem "target/${{ matrix.target }}/debug/deps/wic_com_e2e-*.exe" |
+            Select-Object -First 1
+          if (-not $testExe) {
+            throw "wic_com_e2e test binary was not built"
+          }
+          # The test binary loads `jxlrs_wic.dll` from its own directory before PATH, so the
+          # `DllGetClassObject` it exports is the one COM binds for the registered CLSID.
+          Write-Host "Test runner: $($testExe.FullName)"
+
           Write-Host "Registering COM server with regsvr32: $dllPath"
           $regProc = Start-Process -FilePath "regsvr32.exe" -ArgumentList "/s", "`"$dllPath`"" -Wait -PassThru -NoNewWindow
           if ($regProc.ExitCode -ne 0) {
@@ -76,15 +91,25 @@ jobs:
           }
           Write-Host "regsvr32 registration completed successfully."
 
-          Write-Host "Running WIC registration verification..."
-          pwsh -File ./tests/verify_wic_registration.ps1 -DllPath "$dllPath"
+          try {
+            Write-Host "Running WIC registration verification..."
+            pwsh -File ./tests/verify_wic_registration.ps1 -DllPath "$dllPath"
 
-          Write-Host "Unregistering COM server with regsvr32 /u..."
-          $unregProc = Start-Process -FilePath "regsvr32.exe" -ArgumentList "/s", "/u", "`"$dllPath`"" -Wait -PassThru -NoNewWindow
-          if ($unregProc.ExitCode -ne 0) {
-            throw "regsvr32 unregistration failed with exit code $($unregProc.ExitCode)"
+            $env:JXLRS_REQUIRE_COM = "1"
+            Write-Host "Running headless WIC COM end-to-end suite..."
+            & $testExe.FullName --test-threads=1
+            if ($LASTEXITCODE -ne 0) {
+              throw "WIC end-to-end suite failed with exit code $LASTEXITCODE"
+            }
           }
-          Write-Host "regsvr32 unregistration completed successfully."
+          finally {
+            Write-Host "Unregistering COM server with regsvr32 /u..."
+            $unregProc = Start-Process -FilePath "regsvr32.exe" -ArgumentList "/s", "/u", "`"$dllPath`"" -Wait -PassThru -NoNewWindow
+            if ($unregProc.ExitCode -ne 0) {
+              throw "regsvr32 unregistration failed with exit code $($unregProc.ExitCode)"
+            }
+            Write-Host "regsvr32 unregistration completed successfully."
+          }
 
           Write-Host "Running WIC unregistration cleanup verification..."
           pwsh -File ./tests/verify_wic_registration.ps1 -DllPath "$dllPath" -Unregistered

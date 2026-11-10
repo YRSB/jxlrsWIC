@@ -13,7 +13,9 @@ use windows::Win32::System::Com::IClassFactory;
 
 pub mod clsfactory;
 pub mod decoder;
+pub mod decoder_seam;
 pub mod guids;
+pub mod jxl_seam;
 pub mod registry;
 
 use clsfactory::JxlWicClassFactory;
@@ -159,13 +161,8 @@ mod tests {
                 .expect("GetContainerFormat failed");
             assert_eq!(container_format, GUID_ContainerFormatJxl);
 
-            let frame_count = decoder.GetFrameCount().expect("GetFrameCount failed");
-            assert_eq!(frame_count, 1);
-
-            let caps = decoder
-                .QueryCapability(None)
-                .expect("QueryCapability failed");
-            assert_eq!(caps, 0x4);
+            // A freshly created decoder has no stream attached yet.
+            assert!(decoder.GetFrameCount().is_err());
         }
     }
 }
