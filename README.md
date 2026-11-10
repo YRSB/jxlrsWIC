@@ -75,7 +75,9 @@ tasklist /m jxlrs_wic.dll
 
 Decoding is bounded to protect the host process from malformed input: streams larger than
 256 MiB and images larger than 16,384 × 16,384 pixels are rejected during
-`IWICBitmapDecoder::Initialize`.
+`IWICBitmapDecoder::Initialize`. Panics raised inside the bitstream parser are caught at the
+COM boundary and reported as `WINCODEC_ERR_BADIMAGE`, so a corrupt file cannot take down the
+application that opened it.
 
 ## Building from source
 
