@@ -8,6 +8,7 @@ use windows::Win32::System::Registry::{
     RegCloseKey, RegCreateKeyExW, RegDeleteKeyW, RegSetValueExW, HKEY, HKEY_CLASSES_ROOT,
     KEY_WRITE, REG_BINARY, REG_DWORD, REG_OPTION_NON_VOLATILE, REG_SZ,
 };
+use windows::Win32::UI::Shell::{SHChangeNotify, SHCNE_ASSOCCHANGED, SHCNF_IDLIST};
 
 const CLSID_DECODER_STR: &str = "{466C040F-E9A9-45F4-BE8A-BF0386B15E28}";
 const CATID_DECODERS_STR: &str = "{7ED96837-96F0-4812-B211-F13C24117ED3}";
@@ -138,6 +139,21 @@ pub fn get_module_path(hmodule: HMODULE) -> Result<String> {
     String::from_utf16(&buf).map_err(|_| windows::core::Error::from_win32())
 }
 
+/// Tells the shell that file associations changed, so cached thumbnails and icons for a
+/// newly supported extension are discarded and re-queried against the decoders WIC now sees.
+///
+/// Without this, an Explorer window that already rendered `.jxl` files as "unknown type"
+/// keeps showing those cached placeholders after the decoder is registered. The call has no
+/// failure mode worth reporting: the registration itself already succeeded, and a stale
+/// icon cache is cosmetic.
+fn notify_shell_of_association_change() {
+    // SAFETY: `SHCNF_IDLIST` with null item pointers is the documented "refresh everything"
+    // form of this call; it dereferences neither argument.
+    unsafe {
+        SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None);
+    }
+}
+
 /// Registers the WIC decoder in the Windows Registry (`HKEY_CLASSES_ROOT`).
 pub fn register_server(hmodule: HMODULE) -> Result<()> {
     let dll_path = get_module_path(hmodule)?;
@@ -223,6 +239,7 @@ pub fn register_server(hmodule: HMODULE) -> Result<()> {
     k_cat.set_string(Some("CLSID"), CLSID_DECODER_STR)?;
     k_cat.set_string(Some("FriendlyName"), "jxlrsWIC JPEG XL Decoder")?;
 
+    notify_shell_of_association_change();
     Ok(())
 }
 
@@ -247,5 +264,8 @@ pub fn unregister_server() -> Result<()> {
         let _ = unsafe { RegDeleteKeyW(HKEY_CLASSES_ROOT, PCWSTR(wide.as_ptr())) };
     }
 
+    // Same reasoning as registration: without this, thumbnails rendered by the decoder linger
+    // in the shell cache after the decoder is gone.
+    notify_shell_of_association_change();
     Ok(())
 }
