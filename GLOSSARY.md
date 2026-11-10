@@ -15,3 +15,7 @@ _Avoid_: Wrapper, bridge, driver
 **Frame Decode**:
 The WIC representation (`IWICBitmapFrameDecode`) of an individual image frame providing dimensions, color contexts, and raster pixel data.
 _Avoid_: Sub-image, page, layer
+
+**Cached Raster**:
+The decoded in-memory pixel buffer owned by a Frame Decode, used to serve subsequent `CopyPixels` requests without re-decoding the underlying bitstream.
+_Avoid_: Frame buffer, pixel cache, decoded cache
