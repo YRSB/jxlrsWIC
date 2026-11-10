@@ -141,18 +141,19 @@ mod tests {
     fn test_dll_get_class_object_and_create_instance() {
         unsafe {
             let mut factory_ptr: *mut c_void = std::ptr::null_mut();
-            let hr =
-                DllGetClassObject(&CLSID_JxlrsWICDecoder, &IClassFactory::IID, &mut factory_ptr);
+            let hr = DllGetClassObject(
+                &CLSID_JxlrsWICDecoder,
+                &IClassFactory::IID,
+                &mut factory_ptr,
+            );
             assert_eq!(hr, S_OK);
             assert!(!factory_ptr.is_null());
 
             let factory: IClassFactory = std::mem::transmute(factory_ptr);
-            let mut decoder_ptr: *mut c_void = std::ptr::null_mut();
-            let res = factory.CreateInstance(None, &IWICBitmapDecoder::IID, &mut decoder_ptr);
-            assert!(res.is_ok());
-            assert!(!decoder_ptr.is_null());
+            let decoder: IWICBitmapDecoder = factory
+                .CreateInstance(None)
+                .expect("CreateInstance failed");
 
-            let decoder: IWICBitmapDecoder = std::mem::transmute(decoder_ptr);
             let container_format = decoder
                 .GetContainerFormat()
                 .expect("GetContainerFormat failed");

@@ -35,13 +35,13 @@ impl Default for JxlWicDecoder {
 }
 
 impl IWICBitmapDecoder_Impl for JxlWicDecoder_Impl {
-    fn QueryCapability(&self, _pistream: &Option<IStream>) -> Result<u32> {
+    fn QueryCapability(&self, _pistream: Option<&IStream>) -> Result<u32> {
         Ok(WIC_BITMAP_DECODER_CAPABILITY_CAN_DECODE_ALL_IMAGES)
     }
 
     fn Initialize(
         &self,
-        _pistream: &Option<IStream>,
+        _pistream: Option<&IStream>,
         _cacheoptions: WICDecodeOptions,
     ) -> Result<()> {
         Ok(())
@@ -55,7 +55,7 @@ impl IWICBitmapDecoder_Impl for JxlWicDecoder_Impl {
         Err(E_NOTIMPL.into())
     }
 
-    fn CopyPalette(&self, _pipalette: &Option<IWICPalette>) -> Result<()> {
+    fn CopyPalette(&self, _pipalette: Option<&IWICPalette>) -> Result<()> {
         Err(WINCODEC_ERR_PALETTEUNAVAILABLE.into())
     }
 
