@@ -1,7 +1,7 @@
 //! Windows Registry COM server and WIC decoder registration logic.
 
 use std::slice;
-use windows::core::{PCWSTR, Result};
+use windows::core::{Result, PCWSTR};
 use windows::Win32::Foundation::{ERROR_SUCCESS, HMODULE};
 use windows::Win32::System::LibraryLoader::GetModuleFileNameW;
 use windows::Win32::System::Registry::{
@@ -88,10 +88,7 @@ impl RegKey {
                 PCWSTR(wide_name.as_ptr()),
                 0,
                 REG_DWORD,
-                Some(slice::from_raw_parts(
-                    &value as *const u32 as *const u8,
-                    4,
-                )),
+                Some(slice::from_raw_parts(&value as *const u32 as *const u8, 4)),
             )
         };
         if status == ERROR_SUCCESS {

@@ -89,11 +89,11 @@ pub extern "system" fn DllCanUnloadNow() -> HRESULT {
 pub unsafe extern "system" fn DllRegisterServer() -> HRESULT {
     let mut raw_hmod = MODULE_HANDLE.load(Ordering::SeqCst);
     if raw_hmod.is_null() {
+        use windows::core::PCWSTR;
         use windows::Win32::System::LibraryLoader::{
             GetModuleHandleExW, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
             GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
         };
-        use windows::core::PCWSTR;
         let mut resolved_hmod = HMODULE(std::ptr::null_mut());
         let _ = GetModuleHandleExW(
             GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
@@ -141,32 +141,29 @@ mod tests {
     fn test_dll_get_class_object_and_create_instance() {
         unsafe {
             let mut factory_ptr: *mut c_void = std::ptr::null_mut();
-            let hr = DllGetClassObject(
-                &CLSID_JxlrsWICDecoder,
-                &IClassFactory::IID,
-                &mut factory_ptr,
-            );
+            let hr =
+                DllGetClassObject(&CLSID_JxlrsWICDecoder, &IClassFactory::IID, &mut factory_ptr);
             assert_eq!(hr, S_OK);
             assert!(!factory_ptr.is_null());
 
             let factory: IClassFactory = std::mem::transmute(factory_ptr);
             let mut decoder_ptr: *mut c_void = std::ptr::null_mut();
-            let res = factory.CreateInstance(
-                None,
-                &IWICBitmapDecoder::IID,
-                &mut decoder_ptr,
-            );
+            let res = factory.CreateInstance(None, &IWICBitmapDecoder::IID, &mut decoder_ptr);
             assert!(res.is_ok());
             assert!(!decoder_ptr.is_null());
 
             let decoder: IWICBitmapDecoder = std::mem::transmute(decoder_ptr);
-            let container_format = decoder.GetContainerFormat().expect("GetContainerFormat failed");
+            let container_format = decoder
+                .GetContainerFormat()
+                .expect("GetContainerFormat failed");
             assert_eq!(container_format, GUID_ContainerFormatJxl);
 
             let frame_count = decoder.GetFrameCount().expect("GetFrameCount failed");
             assert_eq!(frame_count, 1);
 
-            let caps = decoder.QueryCapability(None).expect("QueryCapability failed");
+            let caps = decoder
+                .QueryCapability(None)
+                .expect("QueryCapability failed");
             assert_eq!(caps, 0x4);
         }
     }

@@ -1,14 +1,13 @@
 //! Minimal WIC bitmap decoder prototype implementation for JPEG XL.
 
+use crate::guids::GUID_ContainerFormatJxl;
 use windows::core::{implement, Result, GUID, HRESULT};
 use windows::Win32::Foundation::E_NOTIMPL;
 use windows::Win32::Graphics::Imaging::{
-    IWICBitmapDecoder, IWICBitmapDecoder_Impl, IWICBitmapFrameDecode, IWICBitmapSource,
-    IWICColorContext, IWICMetadataQueryReader, IWICPalette, WICDecodeOptions,
-    IWICBitmapDecoderInfo,
+    IWICBitmapDecoder, IWICBitmapDecoderInfo, IWICBitmapDecoder_Impl, IWICBitmapFrameDecode,
+    IWICBitmapSource, IWICColorContext, IWICMetadataQueryReader, IWICPalette, WICDecodeOptions,
 };
 use windows::Win32::System::Com::IStream;
-use crate::guids::GUID_ContainerFormatJxl;
 
 // WIC Bitmap Decoder Capability flags
 const WIC_BITMAP_DECODER_CAPABILITY_CAN_DECODE_ALL_IMAGES: u32 = 0x4;
@@ -36,11 +35,15 @@ impl Default for JxlWicDecoder {
 }
 
 impl IWICBitmapDecoder_Impl for JxlWicDecoder_Impl {
-    fn QueryCapability(&self, _pistream: Option<&IStream>) -> Result<u32> {
+    fn QueryCapability(&self, _pistream: &Option<IStream>) -> Result<u32> {
         Ok(WIC_BITMAP_DECODER_CAPABILITY_CAN_DECODE_ALL_IMAGES)
     }
 
-    fn Initialize(&self, _pistream: Option<&IStream>, _cacheoptions: WICDecodeOptions) -> Result<()> {
+    fn Initialize(
+        &self,
+        _pistream: &Option<IStream>,
+        _cacheoptions: WICDecodeOptions,
+    ) -> Result<()> {
         Ok(())
     }
 
@@ -52,7 +55,7 @@ impl IWICBitmapDecoder_Impl for JxlWicDecoder_Impl {
         Err(E_NOTIMPL.into())
     }
 
-    fn CopyPalette(&self, _pipalette: Option<&IWICPalette>) -> Result<()> {
+    fn CopyPalette(&self, _pipalette: &Option<IWICPalette>) -> Result<()> {
         Err(WINCODEC_ERR_PALETTEUNAVAILABLE.into())
     }
 

@@ -1,11 +1,11 @@
 //! Minimal COM class factory for jxlrsWIC decoder.
 
-use std::ffi::c_void;
-use windows::core::{implement, IUnknown, Interface, Result, GUID};
+use crate::decoder::JxlWicDecoder;
+use core::ffi::c_void;
+use windows::core::{implement, GUID, IUnknown, Interface, Result};
 use windows::Win32::Foundation::{BOOL, CLASS_E_NOAGGREGATION, E_POINTER};
 use windows::Win32::Graphics::Imaging::IWICBitmapDecoder;
 use windows::Win32::System::Com::{IClassFactory, IClassFactory_Impl};
-use crate::decoder::JxlWicDecoder;
 
 /// Class factory for creating [`JxlWicDecoder`] instances.
 #[implement(IClassFactory)]
@@ -27,7 +27,7 @@ impl Default for JxlWicClassFactory {
 impl IClassFactory_Impl for JxlWicClassFactory_Impl {
     fn CreateInstance(
         &self,
-        punkouter: Option<&IUnknown>,
+        punkouter: &Option<IUnknown>,
         riid: *const GUID,
         ppvobject: *mut *mut c_void,
     ) -> Result<()> {
