@@ -9,7 +9,7 @@ use windows::Win32::Foundation::{BOOL, CLASS_E_NOAGGREGATION, E_POINTER};
 use windows::Win32::Graphics::Imaging::IWICBitmapDecoder;
 use windows::Win32::System::Com::{IClassFactory, IClassFactory_Impl};
 
-/// Class factory for creating [`JxlWicDecoder`] instances.
+/// Class factory for creating JPEG XL WIC decoder instances.
 #[implement(IClassFactory)]
 pub struct JxlWicClassFactory;
 
