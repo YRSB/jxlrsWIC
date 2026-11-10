@@ -20,12 +20,9 @@ use windows::Win32::System::Com::{
 use windows::Win32::UI::Shell::SHCreateMemStream;
 
 use jxlrs_wic::guids::{
-    CLSID_JxlrsWICDecoder, GUID_ContainerFormatJxl, GUID_WICPixelFormat32bppBGRA,
-    GUID_WICPixelFormat64bppRGBA, GUID_WICPixelFormat64bppRGBAHalf,
+    CLSID_JxlrsWICDecoder, CLSID_WICImagingFactory, GUID_ContainerFormatJxl,
+    GUID_WICPixelFormat32bppBGRA, GUID_WICPixelFormat64bppRGBA, GUID_WICPixelFormat64bppRGBAHalf,
 };
-
-/// `CLSID_WICImagingFactory`, the platform factory used to create colour contexts.
-const CLSID_WIC_IMAGING_FACTORY: GUID = GUID::from_u128(0xCACAF262_9370_4615_A13B_9F5539DA4C0A);
 
 const WINCODEC_ERR_CODECNOTHUMBNAIL: i32 = 0x88982F44_u32 as i32;
 const WINCODEC_ERR_PALETTEUNAVAILABLE: i32 = 0x88982F45_u32 as i32;
@@ -76,7 +73,7 @@ fn create_factory() -> IWICImagingFactory {
     // SAFETY: WIC's factory is a stable in-process server.
     unsafe {
         CoCreateInstance::<Option<&IUnknown>, IWICImagingFactory>(
-            &CLSID_WIC_IMAGING_FACTORY,
+            &CLSID_WICImagingFactory,
             None,
             CLSCTX_INPROC_SERVER,
         )
@@ -349,6 +346,45 @@ fn decoder_get_color_contexts_delegates_to_the_frame() {
             .expect("GetColorContexts(count only) on the decoder");
     }
     assert_eq!(count, 1, "the decoder must report the frame's ICC profile");
+}
+
+#[test]
+fn describes_itself_as_a_bitmap_decoder() {
+    let Some(decoder) = create_decoder() else {
+        return;
+    };
+
+    // SAFETY: the call only reads decoder state and returns an owned interface.
+    let info = unsafe { decoder.GetDecoderInfo() }.expect("GetDecoderInfo");
+
+    // Every accessor below is answered by WIC from the registry keys our `DllRegisterServer`
+    // wrote, so this test also guards that registration and the component info agree.
+    let mut name_buffer = [0u16; 128];
+    let mut name_length = 0u32;
+    // SAFETY: the buffer and out-parameter are valid for the call.
+    unsafe { info.GetFriendlyName(&mut name_buffer, &mut name_length) }.expect("GetFriendlyName");
+    let friendly_name = String::from_utf16_lossy(&name_buffer[..name_length as usize]);
+    assert!(
+        friendly_name.contains("jxlrsWIC"),
+        "unexpected FriendlyName: {friendly_name}"
+    );
+
+    // SAFETY: read-only accessor.
+    let container = unsafe { info.GetContainerFormat() }.expect("GetContainerFormat");
+    assert_eq!(container, GUID_ContainerFormatJxl);
+
+    // `Formats` is what registration writes; a decoder info with none would fail WIC's own
+    // format negotiation before our decoder is ever instantiated.
+    let mut format_count = 0u32;
+    // SAFETY: an empty slice with a valid out-parameter is the documented size query.
+    unsafe { info.GetPixelFormats(&mut [], &mut format_count) }.expect("GetPixelFormats");
+    assert!(format_count > 0, "decoder info advertises no pixel formats");
+
+    // `SupportLossless` is registered as 1, so this must agree.
+    // SAFETY: read-only accessor.
+    assert!(unsafe { info.DoesSupportLossless() }
+        .expect("DoesSupportLossless")
+        .as_bool());
 }
 
 #[test]
