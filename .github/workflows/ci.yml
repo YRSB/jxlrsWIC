@@ -45,6 +45,10 @@ jobs:
             run_tests: true
           - target: aarch64-pc-windows-msvc
             run_tests: false
+          # Shipped alongside the other architectures so 32-bit WIC hosts can load the
+          # decoder. Built but not exercised: no 32-bit COM host is available on the runner.
+          - target: i686-pc-windows-msvc
+            run_tests: false
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
