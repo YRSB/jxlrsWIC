@@ -376,10 +376,21 @@ fn describes_itself_as_a_bitmap_decoder() {
 
     // `Formats` is what registration writes; a decoder info with none would fail WIC's own
     // format negotiation before our decoder is ever instantiated.
+    //
+    // Pass a real buffer rather than the documented NULL size query: the Windows binding models
+    // the parameter as `&mut [GUID]`, so `&mut []` becomes a dangling non-NULL pointer, and WIC
+    // answers 0 for that instead of the count it would report for NULL.
+    let mut formats = [GUID::from_u128(0); 16];
     let mut format_count = 0u32;
-    // SAFETY: an empty slice with a valid out-parameter is the documented size query.
-    unsafe { info.GetPixelFormats(&mut [], &mut format_count) }.expect("GetPixelFormats");
+    // SAFETY: the buffer and out-parameter are valid for the call.
+    unsafe { info.GetPixelFormats(&mut formats, &mut format_count) }.expect("GetPixelFormats");
     assert!(format_count > 0, "decoder info advertises no pixel formats");
+
+    let formats = &formats[..format_count as usize];
+    assert!(
+        formats.contains(&GUID_WICPixelFormat32bppBGRA),
+        "32bppBGRA is missing from the registered formats: {formats:?}"
+    );
 
     // `SupportLossless` is registered as 1, so this must agree.
     // SAFETY: read-only accessor.
