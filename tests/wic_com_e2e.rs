@@ -9,7 +9,7 @@
 
 use std::path::PathBuf;
 
-use windows::core::{IUnknown, Interface, GUID};
+use windows::core::{IUnknown, GUID};
 use windows::Win32::Graphics::Imaging::{
     IWICBitmapDecoder, IWICBitmapFrameDecode, IWICImagingFactory,
     WICBitmapDecoderCapabilityCanDecodeAllImages, WICDecodeMetadataCacheOnDemand, WICRect,

@@ -7,7 +7,7 @@
 use std::ffi::c_void;
 use std::sync::{Arc, OnceLock, RwLock};
 
-use windows::core::{implement, IUnknown, Result, GUID, HRESULT};
+use windows::core::{implement, Interface, Result, GUID, HRESULT};
 use windows::Win32::Foundation::{E_INVALIDARG, E_POINTER, E_UNEXPECTED};
 use windows::Win32::Graphics::Imaging::{
     IWICBitmapDecoder, IWICBitmapDecoderInfo, IWICBitmapDecoder_Impl, IWICBitmapFrameDecode,
@@ -25,8 +25,8 @@ use crate::decoder_seam::{
     DecodeError, DecoderSeam, FrameSeam, Rect, WicPixelFormat, MAX_STREAM_BYTES,
 };
 use crate::guids::{
-    CLSID_WICImagingFactory, GUID_ContainerFormatJxl, GUID_WICPixelFormat32bppBGRA,
-    GUID_WICPixelFormat64bppRGBA, GUID_WICPixelFormat64bppRGBAHalf,
+    CLSID_JxlrsWICDecoder, CLSID_WICImagingFactory, GUID_ContainerFormatJxl,
+    GUID_WICPixelFormat32bppBGRA, GUID_WICPixelFormat64bppRGBA, GUID_WICPixelFormat64bppRGBAHalf,
 };
 
 /// WIC error raised when the bitstream cannot be decoded.

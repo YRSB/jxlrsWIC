@@ -64,16 +64,17 @@ tasklist /m jxlrs_wic.dll
 
 ## What is supported
 
-| Feature                | Status                                                   |
-| ---------------------- | -------------------------------------------------------- |
-| Still images           | Yes                                                      |
-| Alpha channel          | Yes, straight alpha                                      |
-| Output formats         | `32bppBGRA`, `64bppRGBA`, `64bppRGBAHalf`                 |
-| Embedded ICC profile   | Returned verbatim                                        |
-| CICP / parametric gamut | Synthesised into a WIC colour context                    |
-| Containers             | ISO BMFF (`0000000cJXL `) and bare codestream (`ff0a`)   |
-| Animated JPEG XL       | Not yet; frame 0 of an animation decodes                 |
-| Encoding               | Out of scope                                             |
+| Feature                 | Status                                                 |
+| ----------------------- | ------------------------------------------------------ |
+| Still images            | Yes                                                    |
+| Alpha channel           | Yes, straight alpha                                    |
+| Output formats          | `32bppBGRA`, `64bppRGBA`, `64bppRGBAHalf`               |
+| Embedded ICC profile    | Returned verbatim                                      |
+| CICP / parametric gamut | Synthesised into a WIC colour context                  |
+| Containers              | ISO BMFF (`0000000cJXL `) and bare codestream (`ff0a`) |
+| Animated JPEG XL        | Not yet; frame 0 of an animation decodes               |
+| Encoding                | Out of scope                                           |
+| `GetDecoderInfo`        | Answered from the registration entries                 |
 
 Decoding is bounded to protect the host process from malformed input: streams larger than
 256 MiB and images larger than 16,384 × 16,384 pixels are rejected during
