@@ -81,6 +81,23 @@ Decoding is bounded to protect the host process from malformed input: streams la
 COM boundary and reported as `WINCODEC_ERR_BADIMAGE`, so a corrupt file cannot take down the
 application that opened it.
 
+## Threading
+
+Frames decode across all available cores. The worker count defaults to the machine's logical
+processor count and can be overridden per process with the `JXLRS_WIC_THREADS` environment
+variable, which is useful when the host application already parallelises over images and you
+would rather not have the decoder compete for cores:
+
+```pwsh
+$env:JXLRS_WIC_THREADS = "4"
+```
+
+The value is clamped to `1..=64`; anything that is not a positive integer falls back to the
+default. Setting `1` makes decoding single-threaded.
+
+Only the first `CopyPixels` for a frame performs the decode; every later call on that Frame
+Decode reads the Cached Raster, so the threads are not touched again.
+
 ## Building from source
 
 ```pwsh

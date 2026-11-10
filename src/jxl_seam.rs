@@ -344,6 +344,11 @@ fn decode_raster(
     // The dimension ceiling already bounds worst-case memory; `sample_limit` would be stricter
     // than WIC expects for wide-gamut images with several extra channels, so leave it unset.
     let mut decoder = JxlDecoder::new(options);
+
+    // One runner per decode, shared by both passes: `jxl-rs` only parallelises the frame
+    // rendering pass today, but handing it the same runner for the header pass keeps the
+    // wiring uniform if that changes.
+    let mut runner = crate::parallel_runner::ThreadRunner::new();
     let mut input = bytes;
 
     let layout = OutputLayout::for_format(format);
@@ -360,7 +365,7 @@ fn decode_raster(
     // header events drive a first pass and the frame is then decoded with buffers attached.
     loop {
         let event = decoder
-            .process(&mut input, None, None)
+            .process(&mut input, None, Some(&mut runner))
             .map_err(map_jxl_error)?;
         match event {
             Event::BasicInfo => {
@@ -389,7 +394,7 @@ fn decode_raster(
 
     loop {
         match decoder
-            .process(&mut input, Some(&mut buffers), None)
+            .process(&mut input, Some(&mut buffers), Some(&mut runner))
             .map_err(map_jxl_error)?
         {
             Event::FrameComplete { .. } | Event::Complete => break,
