@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "prototype/**" ]
   pull_request:
     branches: [ "main" ]
   workflow_dispatch:
@@ -63,6 +63,31 @@ jobs:
 
       - name: Build release cdylib
         run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Verify COM registration with regsvr32 (x86_64)
+        if: matrix.run_tests
+        shell: pwsh
+        run: |
+          $dllPath = (Resolve-Path "target/${{ matrix.target }}/release/jxlrs_wic.dll").Path
+          Write-Host "Registering COM server with regsvr32: $dllPath"
+          regsvr32.exe /s "$dllPath"
+          if ($LASTEXITCODE -ne 0) {
+            throw "regsvr32 registration failed with exit code $LASTEXITCODE"
+          }
+          Write-Host "regsvr32 registration completed."
+
+          Write-Host "Running WIC registration verification..."
+          pwsh -File ./tests/verify_wic_registration.ps1 -DllPath "$dllPath"
+
+          Write-Host "Unregistering COM server with regsvr32 /u..."
+          regsvr32.exe /s /u "$dllPath"
+          if ($LASTEXITCODE -ne 0) {
+            throw "regsvr32 unregistration failed with exit code $LASTEXITCODE"
+          }
+          Write-Host "regsvr32 unregistration completed."
+
+          Write-Host "Running WIC unregistration cleanup verification..."
+          pwsh -File ./tests/verify_wic_registration.ps1 -DllPath "$dllPath" -Unregistered
 
       - name: Upload DLL artifact
         uses: actions/upload-artifact@v4

@@ -1,0 +1,55 @@
+//! GUID definitions for WIC JPEG XL decoder component, container format, and pixel formats.
+
+use windows::core::GUID;
+
+/// WIC Bitmap Decoders category GUID: `{7ED96837-96F0-4812-B211-F13C24117ED3}`
+pub const CATID_WICBitmapDecoders: GUID =
+    GUID::from_u128(0x7ED96837_96F0_4812_B211_F13C24117ED3);
+
+/// Official Microsoft WIC Container Format GUID for JPEG XL: `{FEC14E3F-427A-4736-AAE6-27ED84F69322}`
+pub const GUID_ContainerFormatJxl: GUID =
+    GUID::from_u128(0xFEC14E3F_427A_4736_AAE6_27ED84F69322);
+
+/// Implementation CLSID for jxlrsWIC decoder: `{466C040F-E9A9-45F4-BE8A-BF0386B15E28}`
+pub const CLSID_JxlrsWICDecoder: GUID =
+    GUID::from_u128(0x466C040F_E9A9_45F4_BE8A_BF0386B15E28);
+
+/// Vendor GUID for YRSB: `{AE1ACFC8-AF90-46DA-A9E3-FC759EA12407}`
+pub const GUID_VendorYRSB: GUID =
+    GUID::from_u128(0xAE1ACFC8_AF90_46DA_A9E3_FC759EA12407);
+
+/// Standard 24bpp RGB pixel format: `{6FDDC324-4E03-4BFE-B185-3D77768DC90D}`
+pub const GUID_WICPixelFormat24bppRGB: GUID =
+    GUID::from_u128(0x6FDDC324_4E03_4BFE_B185_3D77768DC90D);
+
+/// Standard 24bpp BGR pixel format: `{6FDDC324-4E03-4BFE-B185-3D77768DC90C}`
+pub const GUID_WICPixelFormat24bppBGR: GUID =
+    GUID::from_u128(0x6FDDC324_4E03_4BFE_B185_3D77768DC90C);
+
+/// Standard 32bpp RGBA pixel format: `{6FDDC324-4E03-4BFE-B185-3D77768DC916}`
+pub const GUID_WICPixelFormat32bppRGBA: GUID =
+    GUID::from_u128(0x6FDDC324_4E03_4BFE_B185_3D77768DC916);
+
+/// Standard 32bpp BGRA pixel format: `{6FDDC324-4E03-4BFE-B185-3D77768DC90F}`
+pub const GUID_WICPixelFormat32bppBGRA: GUID =
+    GUID::from_u128(0x6FDDC324_4E03_4BFE_B185_3D77768DC90F);
+
+/// 32bpp per channel float RGBA (HDR): `{6FDDC324-4E03-4BFE-B185-3D77768DC920}`
+pub const GUID_WICPixelFormat32bppRGBAFloat: GUID =
+    GUID::from_u128(0x6FDDC324_4E03_4BFE_B185_3D77768DC920);
+
+/// 48bpp RGB (16-bit per channel): `{6FDDC324-4E03-4BFE-B185-3D77768DC915}`
+pub const GUID_WICPixelFormat48bppRGB: GUID =
+    GUID::from_u128(0x6FDDC324_4E03_4BFE_B185_3D77768DC915);
+
+/// 64bpp RGBA (16-bit per channel): `{6FDDC324-4E03-4BFE-B185-3D77768DC917}`
+pub const GUID_WICPixelFormat64bppRGBA: GUID =
+    GUID::from_u128(0x6FDDC324_4E03_4BFE_B185_3D77768DC917);
+
+/// 8bpp Gray: `{6FDDC324-4E03-4BFE-B185-3D77768DC908}`
+pub const GUID_WICPixelFormat8bppGray: GUID =
+    GUID::from_u128(0x6FDDC324_4E03_4BFE_B185_3D77768DC908);
+
+/// 16bpp Gray: `{6FDDC324-4E03-4BFE-B185-3D77768DC90B}`
+pub const GUID_WICPixelFormat16bppGray: GUID =
+    GUID::from_u128(0x6FDDC324_4E03_4BFE_B185_3D77768DC90B);
