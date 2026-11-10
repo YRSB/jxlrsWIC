@@ -126,8 +126,9 @@ jobs:
         shell: bash
         run: |
           cd dist
+          # Keep the per-archive .sha256 files: the README tells users to read them. The
+          # aggregate file is a convenience for anyone verifying the whole set at once.
           sha256sum *.zip | tee sha256.sum
-          rm -f *.zip.sha256
 
       - name: Create GitHub Release
         shell: bash
