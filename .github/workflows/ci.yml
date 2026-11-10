@@ -70,21 +70,21 @@ jobs:
         run: |
           $dllPath = (Resolve-Path "target/${{ matrix.target }}/release/jxlrs_wic.dll").Path
           Write-Host "Registering COM server with regsvr32: $dllPath"
-          regsvr32.exe /s "$dllPath"
-          if ($LASTEXITCODE -ne 0) {
-            throw "regsvr32 registration failed with exit code $LASTEXITCODE"
+          $regProc = Start-Process -FilePath "regsvr32.exe" -ArgumentList "/s", "`"$dllPath`"" -Wait -PassThru -NoNewWindow
+          if ($regProc.ExitCode -ne 0) {
+            throw "regsvr32 registration failed with exit code $($regProc.ExitCode)"
           }
-          Write-Host "regsvr32 registration completed."
+          Write-Host "regsvr32 registration completed successfully."
 
           Write-Host "Running WIC registration verification..."
           pwsh -File ./tests/verify_wic_registration.ps1 -DllPath "$dllPath"
 
           Write-Host "Unregistering COM server with regsvr32 /u..."
-          regsvr32.exe /s /u "$dllPath"
-          if ($LASTEXITCODE -ne 0) {
-            throw "regsvr32 unregistration failed with exit code $LASTEXITCODE"
+          $unregProc = Start-Process -FilePath "regsvr32.exe" -ArgumentList "/s", "/u", "`"$dllPath`"" -Wait -PassThru -NoNewWindow
+          if ($unregProc.ExitCode -ne 0) {
+            throw "regsvr32 unregistration failed with exit code $($unregProc.ExitCode)"
           }
-          Write-Host "regsvr32 unregistration completed."
+          Write-Host "regsvr32 unregistration completed successfully."
 
           Write-Host "Running WIC unregistration cleanup verification..."
           pwsh -File ./tests/verify_wic_registration.ps1 -DllPath "$dllPath" -Unregistered

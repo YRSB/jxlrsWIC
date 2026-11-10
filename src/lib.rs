@@ -1,6 +1,7 @@
 //! Pure Rust Windows Imaging Component (WIC) decoder for JPEG XL.
 
 #![deny(missing_docs)]
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicIsize, AtomicPtr, Ordering};

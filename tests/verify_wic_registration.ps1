@@ -87,5 +87,6 @@ if ($null -eq $instance) {
 }
 
 Write-Host "COM activation succeeded: Object created ($instance)" -ForegroundColor Green
+[System.Runtime.InteropServices.Marshal]::ReleaseComObject($instance) | Out-Null
 Write-Host "All WIC COM registration and activation checks passed!" -ForegroundColor Green
 exit 0
