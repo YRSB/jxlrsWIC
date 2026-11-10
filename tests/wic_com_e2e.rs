@@ -9,7 +9,8 @@
 
 use std::path::PathBuf;
 
-use windows::core::{IUnknown, GUID};
+// `Interface` is needed for the `IClassFactory::IID` associated constant.
+use windows::core::{IUnknown, Interface, GUID};
 use windows::Win32::Graphics::Imaging::{
     IWICBitmapDecoder, IWICBitmapFrameDecode, IWICImagingFactory,
     WICBitmapDecoderCapabilityCanDecodeAllImages, WICDecodeMetadataCacheOnDemand, WICRect,
