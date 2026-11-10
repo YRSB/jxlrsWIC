@@ -313,30 +313,34 @@ impl IWICBitmapSource_Impl for JxlFrameDecode_Impl {
         cbbuffersize: u32,
         pbbuffer: *mut u8,
     ) -> Result<()> {
-        if pbbuffer.is_null() {
-            return Err(E_POINTER.into());
-        }
-        let rect = if prc.is_null() {
-            None
-        } else {
-            // SAFETY: the caller passed a non-null WICRect pointer.
-            let raw = unsafe { *prc };
-            if raw.X < 0 || raw.Y < 0 || raw.Width < 0 || raw.Height < 0 {
-                return Err(E_INVALIDARG.into());
+        // The first `CopyPixels` is the call that decodes the bitstream, so it is the one that
+        // can trip a parser panic inside `jxl-rs`. Contain it rather than aborting the host.
+        crate::panic_guard::guard(|| {
+            if pbbuffer.is_null() {
+                return Err(E_POINTER.into());
             }
-            Some(Rect::new(
-                raw.X as u32,
-                raw.Y as u32,
-                raw.Width as u32,
-                raw.Height as u32,
-            ))
-        };
+            let rect = if prc.is_null() {
+                None
+            } else {
+                // SAFETY: the caller passed a non-null WICRect pointer.
+                let raw = unsafe { *prc };
+                if raw.X < 0 || raw.Y < 0 || raw.Width < 0 || raw.Height < 0 {
+                    return Err(E_INVALIDARG.into());
+                }
+                Some(Rect::new(
+                    raw.X as u32,
+                    raw.Y as u32,
+                    raw.Width as u32,
+                    raw.Height as u32,
+                ))
+            };
 
-        // SAFETY: `pbbuffer` is non-null and the caller promised `cbbuffersize` writable bytes.
-        let buffer = unsafe { std::slice::from_raw_parts_mut(pbbuffer, cbbuffersize as usize) };
-        self.frame
-            .copy_pixels(rect, cbstride as usize, buffer)
-            .map_err(|err| windows::core::Error::from(to_hresult(&err)))
+            // SAFETY: `pbbuffer` is non-null and the caller promised `cbbuffersize` writable bytes.
+            let buffer = unsafe { std::slice::from_raw_parts_mut(pbbuffer, cbbuffersize as usize) };
+            self.frame
+                .copy_pixels(rect, cbstride as usize, buffer)
+                .map_err(|err| windows::core::Error::from(to_hresult(&err)))
+        })
     }
 }
 
@@ -403,14 +407,16 @@ impl Default for JxlWicDecoder {
 
 impl IWICBitmapDecoder_Impl for JxlWicDecoder_Impl {
     fn QueryCapability(&self, pistream: Option<&IStream>) -> Result<u32> {
-        let stream = pistream.ok_or_else(|| windows::core::Error::from(E_INVALIDARG))?;
-        // SAFETY: `stream` is a live COM interface pointer for the duration of the call.
-        let matches = unsafe { sniff_signatures(stream) }?;
-        if matches {
-            Ok(WICBitmapDecoderCapabilityCanDecodeAllImages.0 as u32)
-        } else {
-            Ok(0)
-        }
+        crate::panic_guard::guard(|| {
+            let stream = pistream.ok_or_else(|| windows::core::Error::from(E_INVALIDARG))?;
+            // SAFETY: `stream` is a live COM interface pointer for the duration of the call.
+            let matches = unsafe { sniff_signatures(stream) }?;
+            if matches {
+                Ok(WICBitmapDecoderCapabilityCanDecodeAllImages.0 as u32)
+            } else {
+                Ok(0)
+            }
+        })
     }
 
     fn Initialize(
@@ -418,15 +424,17 @@ impl IWICBitmapDecoder_Impl for JxlWicDecoder_Impl {
         pistream: Option<&IStream>,
         _cacheoptions: WICDecodeOptions,
     ) -> Result<()> {
-        let stream = pistream.ok_or_else(|| windows::core::Error::from(E_INVALIDARG))?;
-        // SAFETY: `stream` is a live COM interface pointer for the duration of the call.
-        let bytes = unsafe { ingest_stream(stream) }?;
-        let seam = crate::jxl_seam::open(&bytes)
-            .map_err(|err| windows::core::Error::from(to_hresult(&err)))?;
-        self.seam
-            .set(seam)
-            .map_err(|_| windows::core::Error::from(WINCODEC_ERR_WRONGSTATE))?;
-        Ok(())
+        crate::panic_guard::guard(|| {
+            let stream = pistream.ok_or_else(|| windows::core::Error::from(E_INVALIDARG))?;
+            // SAFETY: `stream` is a live COM interface pointer for the duration of the call.
+            let bytes = unsafe { ingest_stream(stream) }?;
+            let seam = crate::jxl_seam::open(&bytes)
+                .map_err(|err| windows::core::Error::from(to_hresult(&err)))?;
+            self.seam
+                .set(seam)
+                .map_err(|_| windows::core::Error::from(WINCODEC_ERR_WRONGSTATE))?;
+            Ok(())
+        })
     }
 
     fn GetContainerFormat(&self) -> Result<GUID> {
@@ -455,18 +463,20 @@ impl IWICBitmapDecoder_Impl for JxlWicDecoder_Impl {
         ppicolorcontexts: *mut Option<IWICColorContext>,
         pcactualcount: *mut u32,
     ) -> Result<()> {
-        let slot = ColorContextSlot {
-            capacity: ccount,
-            contexts: ppicolorcontexts,
-            actual_count: pcactualcount,
-        };
-        // The container has no colour context of its own, so it delegates to frame 0.
-        let seam = self.seam()?;
-        let frame = seam
-            .frame(0)
-            .map_err(|err| windows::core::Error::from(to_hresult(&err)))?;
-        // SAFETY: delegated pointer contract, documented on the WIC interface.
-        unsafe { slot.write(frame.color_profile()) }
+        crate::panic_guard::guard(|| {
+            let slot = ColorContextSlot {
+                capacity: ccount,
+                contexts: ppicolorcontexts,
+                actual_count: pcactualcount,
+            };
+            // The container has no colour context of its own, so it delegates to frame 0.
+            let seam = self.seam()?;
+            let frame = seam
+                .frame(0)
+                .map_err(|err| windows::core::Error::from(to_hresult(&err)))?;
+            // SAFETY: delegated pointer contract, documented on the WIC interface.
+            unsafe { slot.write(frame.color_profile()) }
+        })
     }
 
     fn GetThumbnail(&self) -> Result<IWICBitmapSource> {
@@ -474,16 +484,18 @@ impl IWICBitmapDecoder_Impl for JxlWicDecoder_Impl {
     }
 
     fn GetFrameCount(&self) -> Result<u32> {
-        Ok(self.seam()?.frame_count() as u32)
+        crate::panic_guard::guard_unexpected(|| Ok(self.seam()?.frame_count() as u32))
     }
 
     fn GetFrame(&self, index: u32) -> Result<IWICBitmapFrameDecode> {
-        let seam = self.seam()?;
-        let frame = seam
-            .frame(index as usize)
-            .map_err(|err| windows::core::Error::from(to_hresult(&err)))?;
-        let decode: IWICBitmapFrameDecode = JxlFrameDecode::new(frame).into();
-        Ok(decode)
+        crate::panic_guard::guard(|| {
+            let seam = self.seam()?;
+            let frame = seam
+                .frame(index as usize)
+                .map_err(|err| windows::core::Error::from(to_hresult(&err)))?;
+            let decode: IWICBitmapFrameDecode = JxlFrameDecode::new(frame).into();
+            Ok(decode)
+        })
     }
 }
 

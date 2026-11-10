@@ -16,6 +16,7 @@ pub mod decoder;
 pub mod decoder_seam;
 pub mod guids;
 pub mod jxl_seam;
+mod panic_guard;
 pub mod registry;
 
 use clsfactory::JxlWicClassFactory;
