@@ -30,5 +30,8 @@ jxl = { git = "https://github.com/libjxl/jxl-rs", rev = "87620c4f566a7204865b3bc
 opt-level = 3
 lto = true
 codegen-units = 1
-panic = "abort"
+# Deliberately not `abort`: this crate is an in-process COM server, so an unwinding panic is
+# caught at the COM boundary by `panic_guard` and reported as a failed decode. Aborting would
+# instead kill the host process (Explorer, Photos) over a single malformed bitstream.
+panic = "unwind"
 strip = true
