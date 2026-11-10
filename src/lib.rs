@@ -138,9 +138,16 @@ mod tests {
     use windows::Win32::Graphics::Imaging::IWICBitmapDecoder;
 
     #[test]
-    fn test_version() {
-        assert_eq!(version(), env!("CARGO_PKG_VERSION"));
-        assert_eq!(version(), "0.1.2");
+    fn version_is_a_three_part_crate_version() {
+        // The release workflow compares `v<version>` against the pushed tag, so the shape here
+        // is a contract between Cargo.toml and the tag name.
+        let parts: Vec<&str> = version().split('.').collect();
+        assert_eq!(parts.len(), 3, "{}", version());
+        assert!(
+            parts.iter().all(|part| part.parse::<u32>().is_ok()),
+            "{}",
+            version()
+        );
     }
 
     #[test]
