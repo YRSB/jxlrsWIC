@@ -23,7 +23,7 @@ checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 [[package]]
 name = "jxl"
 version = "0.8.0"
-source = "git+https://github.com/libjxl/jxl-rs#87620c4f566a7204865b3bcdc160033114a9a253"
+source = "git+https://github.com/libjxl/jxl-rs?rev=87620c4f566a7204865b3bcdc160033114a9a253#87620c4f566a7204865b3bcdc160033114a9a253"
 dependencies = [
  "array-init",
  "byteorder",
@@ -38,7 +38,7 @@ dependencies = [
 [[package]]
 name = "jxl_macros"
 version = "0.8.0"
-source = "git+https://github.com/libjxl/jxl-rs#87620c4f566a7204865b3bcdc160033114a9a253"
+source = "git+https://github.com/libjxl/jxl-rs?rev=87620c4f566a7204865b3bcdc160033114a9a253#87620c4f566a7204865b3bcdc160033114a9a253"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -48,21 +48,22 @@ dependencies = [
 [[package]]
 name = "jxl_simd"
 version = "0.8.0"
-source = "git+https://github.com/libjxl/jxl-rs#87620c4f566a7204865b3bcdc160033114a9a253"
+source = "git+https://github.com/libjxl/jxl-rs?rev=87620c4f566a7204865b3bcdc160033114a9a253#87620c4f566a7204865b3bcdc160033114a9a253"
 
 [[package]]
 name = "jxl_transforms"
 version = "0.8.0"
-source = "git+https://github.com/libjxl/jxl-rs#87620c4f566a7204865b3bcdc160033114a9a253"
+source = "git+https://github.com/libjxl/jxl-rs?rev=87620c4f566a7204865b3bcdc160033114a9a253#87620c4f566a7204865b3bcdc160033114a9a253"
 dependencies = [
  "jxl_simd",
 ]
 
 [[package]]
 name = "jxlrs_wic"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "jxl",
+ "thiserror",
  "windows",
  "windows-core",
 ]

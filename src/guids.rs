@@ -16,6 +16,9 @@ pub const CLSID_JxlrsWICDecoder: GUID = GUID::from_u128(0x466C040F_E9A9_45F4_BE8
 /// Vendor GUID for YRSB: `{AE1ACFC8-AF90-46DA-A9E3-FC759EA12407}`
 pub const GUID_VendorYRSB: GUID = GUID::from_u128(0xAE1ACFC8_AF90_46DA_A9E3_FC759EA12407);
 
+/// `CLSID_WICImagingFactory`, the platform factory used to build component info.
+pub const CLSID_WICImagingFactory: GUID = GUID::from_u128(0xCACAF262_9370_4615_A13B_9F5539DA4C0A);
+
 /// Standard 24bpp RGB pixel format: `{6FDDC324-4E03-4BFE-B185-3D77768DC90D}`
 pub const GUID_WICPixelFormat24bppRGB: GUID =
     GUID::from_u128(0x6FDDC324_4E03_4BFE_B185_3D77768DC90D);

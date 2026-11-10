@@ -64,22 +64,40 @@ tasklist /m jxlrs_wic.dll
 
 ## What is supported
 
-| Feature                | Status                                                   |
-| ---------------------- | -------------------------------------------------------- |
-| Still images           | Yes                                                      |
-| Alpha channel          | Yes, straight alpha                                      |
-| Output formats         | `32bppBGRA`, `64bppRGBA`, `64bppRGBAHalf`                 |
-| Embedded ICC profile   | Returned verbatim                                        |
-| CICP / parametric gamut | Synthesised into a WIC colour context                    |
-| Containers             | ISO BMFF (`0000000cJXL `) and bare codestream (`ff0a`)   |
-| Animated JPEG XL       | Not yet; frame 0 of an animation decodes                 |
-| Encoding               | Out of scope                                             |
+| Feature                 | Status                                                 |
+| ----------------------- | ------------------------------------------------------ |
+| Still images            | Yes                                                    |
+| Alpha channel           | Yes, straight alpha                                    |
+| Output formats          | `32bppBGRA`, `64bppRGBA`, `64bppRGBAHalf`               |
+| Embedded ICC profile    | Returned verbatim                                      |
+| CICP / parametric gamut | Synthesised into a WIC colour context                  |
+| Containers              | ISO BMFF (`0000000cJXL `) and bare codestream (`ff0a`) |
+| Animated JPEG XL        | Not yet; frame 0 of an animation decodes               |
+| Encoding                | Out of scope                                           |
+| `GetDecoderInfo`        | Answered from the registration entries                 |
 
 Decoding is bounded to protect the host process from malformed input: streams larger than
 256 MiB and images larger than 16,384 × 16,384 pixels are rejected during
 `IWICBitmapDecoder::Initialize`. Panics raised inside the bitstream parser are caught at the
 COM boundary and reported as `WINCODEC_ERR_BADIMAGE`, so a corrupt file cannot take down the
 application that opened it.
+
+## Threading
+
+Frames decode across all available cores. The worker count defaults to the machine's logical
+processor count and can be overridden per process with the `JXLRS_WIC_THREADS` environment
+variable, which is useful when the host application already parallelises over images and you
+would rather not have the decoder compete for cores:
+
+```pwsh
+$env:JXLRS_WIC_THREADS = "4"
+```
+
+The value is clamped to `1..=64`; anything that is not a positive integer falls back to the
+default. Setting `1` makes decoding single-threaded.
+
+Only the first `CopyPixels` for a frame performs the decode; every later call on that Frame
+Decode reads the Cached Raster, so the threads are not touched again.
 
 ## Building from source
 

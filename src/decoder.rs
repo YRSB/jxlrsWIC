@@ -7,23 +7,26 @@
 use std::ffi::c_void;
 use std::sync::{Arc, OnceLock, RwLock};
 
-use windows::core::{implement, Result, GUID, HRESULT};
+use windows::core::{implement, Interface, Result, GUID, HRESULT};
 use windows::Win32::Foundation::{E_INVALIDARG, E_POINTER, E_UNEXPECTED};
 use windows::Win32::Graphics::Imaging::{
     IWICBitmapDecoder, IWICBitmapDecoderInfo, IWICBitmapDecoder_Impl, IWICBitmapFrameDecode,
     IWICBitmapFrameDecode_Impl, IWICBitmapSource, IWICBitmapSource_Impl, IWICColorContext,
-    IWICColorContext_Impl, IWICMetadataQueryReader, IWICPalette,
+    IWICColorContext_Impl, IWICImagingFactory, IWICMetadataQueryReader, IWICPalette,
     WICBitmapDecoderCapabilityCanDecodeAllImages, WICColorContextProfile, WICDecodeOptions,
     WICRect,
 };
-use windows::Win32::System::Com::{IStream, STATFLAG_NONAME, STREAM_SEEK_CUR, STREAM_SEEK_SET};
+use windows::Win32::System::Com::{
+    CoCreateInstance, IStream, CLSCTX_INPROC_SERVER, STATFLAG_NONAME, STREAM_SEEK_CUR,
+    STREAM_SEEK_SET,
+};
 
 use crate::decoder_seam::{
     DecodeError, DecoderSeam, FrameSeam, Rect, WicPixelFormat, MAX_STREAM_BYTES,
 };
 use crate::guids::{
-    GUID_ContainerFormatJxl, GUID_WICPixelFormat32bppBGRA, GUID_WICPixelFormat64bppRGBA,
-    GUID_WICPixelFormat64bppRGBAHalf,
+    CLSID_JxlrsWICDecoder, CLSID_WICImagingFactory, GUID_ContainerFormatJxl,
+    GUID_WICPixelFormat32bppBGRA, GUID_WICPixelFormat64bppRGBA, GUID_WICPixelFormat64bppRGBAHalf,
 };
 
 /// WIC error raised when the bitstream cannot be decoded.
@@ -442,7 +445,21 @@ impl IWICBitmapDecoder_Impl for JxlWicDecoder_Impl {
     }
 
     fn GetDecoderInfo(&self) -> Result<IWICBitmapDecoderInfo> {
-        Err(WINCODEC_ERR_UNSUPPORTEDOPERATION.into())
+        // Hosts call this before decoding anything (WPF's `BitmapDecoder.Create`, for one), so a
+        // stub here breaks them outright rather than degrading gracefully: they receive
+        // `0x88982F81` and cannot distinguish "unsupported" from "corrupt image".
+        //
+        // WIC can describe a decoder from its own registry entries, so the factory builds the
+        // component info for our CLSID and we hand it back as the decoder-specific interface. No
+        // decoder instance is created, so this cannot recurse into `CreateInstance`.
+        crate::panic_guard::guard_unexpected(|| {
+            // SAFETY: WIC's factory is a registered in-process server, and the CLSID is a
+            // `'static` constant valid for the duration of the call.
+            let factory: IWICImagingFactory =
+                unsafe { CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)? };
+            let info = unsafe { factory.CreateComponentInfo(&CLSID_JxlrsWICDecoder) }?;
+            info.cast::<IWICBitmapDecoderInfo>()
+        })
     }
 
     fn CopyPalette(&self, _pipalette: Option<&IWICPalette>) -> Result<()> {
