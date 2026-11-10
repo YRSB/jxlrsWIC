@@ -139,6 +139,19 @@ pub fn get_module_path(hmodule: HMODULE) -> Result<String> {
     String::from_utf16(&buf).map_err(|_| windows::core::Error::from_win32())
 }
 
+/// Formats the crate version as the four-part `WIC` version string the registry expects.
+///
+/// WIC reads `Version` as `a.b.c.d`, so `0.1.2` has to become `0.1.2.0`. Deriving it from
+/// `CARGO_PKG_VERSION` keeps the published value in step with the release instead of drifting
+/// the way a hardcoded literal does.
+fn wic_version() -> String {
+    let mut parts: Vec<&str> = env!("CARGO_PKG_VERSION").split('.').collect();
+    while parts.len() < 4 {
+        parts.push("0");
+    }
+    parts.join(".")
+}
+
 /// Tells the shell that file associations changed, so cached thumbnails and icons for a
 /// newly supported extension are discarded and re-queried against the decoders WIC now sees.
 ///
@@ -175,7 +188,7 @@ pub fn register_server(hmodule: HMODULE) -> Result<()> {
     k_clsid.set_dword("SupportLossless", 1)?;
     k_clsid.set_dword("SupportMultiframe", 0)?;
     k_clsid.set_string(Some("Vendor"), VENDOR_YRSB_STR)?;
-    k_clsid.set_string(Some("Version"), "0.1.0.0")?;
+    k_clsid.set_string(Some("Version"), &wic_version())?;
 
     // 2. InprocServer32
     let k_inproc = RegKey::create(
@@ -268,4 +281,18 @@ pub fn unregister_server() -> Result<()> {
     // in the shell cache after the decoder is gone.
     notify_shell_of_association_change();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wic_version_appends_trailing_zeros_up_to_four_parts() {
+        let crate_version = env!("CARGO_PKG_VERSION");
+        let missing = 4usize.saturating_sub(crate_version.split('.').count());
+        let expected = format!("{crate_version}{}", ".0".repeat(missing));
+        assert_eq!(wic_version(), expected);
+        assert_eq!(wic_version().split('.').count(), 4);
+    }
 }
