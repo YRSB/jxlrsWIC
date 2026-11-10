@@ -51,12 +51,15 @@ jobs:
             throw "Expected release cdylib at $dll was not produced"
           }
 
-          New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
-          Copy-Item $dll "dist/$name/"
-          Copy-Item LICENSE, README.md "dist/$name/"
+          # Staging lives outside `dist`, so every entry uploaded as an artifact is a file.
+          # Anything left in `dist` is passed straight to `gh release create`.
+          $stage = "stage/$name"
+          New-Item -ItemType Directory -Force -Path $stage, "dist" | Out-Null
+          Copy-Item $dll $stage
+          Copy-Item LICENSE, README.md $stage
 
           # Archive the contents only, so the zip unpacks into the current directory.
-          Compress-Archive -Path "dist/$name/*" -DestinationPath "dist/$name.zip" -CompressionLevel Optimal
+          Compress-Archive -Path "$stage/*" -DestinationPath "dist/$name.zip" -CompressionLevel Optimal
 
           $hash = (Get-FileHash "dist/$name.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
           Set-Content -Path "dist/$name.zip.sha256" -Value $hash -NoNewline
@@ -129,6 +132,20 @@ jobs:
           # Keep the per-archive .sha256 files: the README tells users to read them. The
           # aggregate file is a convenience for anyone verifying the whole set at once.
           sha256sum *.zip | tee sha256.sum
+
+      - name: Assert the payload is exactly the expected files
+        shell: bash
+        run: |
+          cd dist
+          # `gh release create` treats a directory as an asset and fails halfway through the
+          # upload, so refuse to publish unless every entry is one of the expected files.
+          unexpected="$(find . -mindepth 1 ! -type f -print)"
+          if [ -n "$unexpected" ]; then
+            echo "Refusing to publish: dist contains non-file entries:" >&2
+            echo "$unexpected" >&2
+            exit 1
+          fi
+          ls -l
 
       - name: Create GitHub Release
         shell: bash
