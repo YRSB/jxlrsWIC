@@ -1,5 +1,7 @@
 //! Minimal COM class factory for jxlrsWIC decoder.
 
+#![allow(missing_docs)]
+
 use crate::decoder::JxlWicDecoder;
 use core::ffi::c_void;
 use windows::core::{implement, IUnknown, Interface, Result, GUID};

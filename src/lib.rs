@@ -150,9 +150,8 @@ mod tests {
             assert!(!factory_ptr.is_null());
 
             let factory: IClassFactory = std::mem::transmute(factory_ptr);
-            let decoder: IWICBitmapDecoder = factory
-                .CreateInstance(None)
-                .expect("CreateInstance failed");
+            let decoder: IWICBitmapDecoder =
+                factory.CreateInstance(None).expect("CreateInstance failed");
 
             let container_format = decoder
                 .GetContainerFormat()

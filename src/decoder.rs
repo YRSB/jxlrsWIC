@@ -1,5 +1,7 @@
 //! Minimal WIC bitmap decoder prototype implementation for JPEG XL.
 
+#![allow(missing_docs)]
+
 use crate::guids::GUID_ContainerFormatJxl;
 use windows::core::{implement, Result, GUID, HRESULT};
 use windows::Win32::Foundation::E_NOTIMPL;

@@ -1,5 +1,7 @@
 //! GUID definitions for WIC JPEG XL decoder component, container format, and pixel formats.
 
+#![allow(non_upper_case_globals)]
+
 use windows::core::GUID;
 
 /// WIC Bitmap Decoders category GUID: `{7ED96837-96F0-4812-B211-F13C24117ED3}`
