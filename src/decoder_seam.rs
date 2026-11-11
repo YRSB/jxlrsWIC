@@ -349,6 +349,10 @@ struct FrameReadout {
     seek_target: Option<VisibleFrameSeekTarget>,
 }
 
+/// Container header readout collected by the scan pass: image metadata, colour profile and
+/// the pixel format the COM layer will report for every frame.
+type ScannedHeader = (jxl::api::JxlBasicInfo, Option<Box<[u8]>>, WicPixelFormat);
+
 /// One visible frame discovered by the container scan: playback timing plus the checkpoint a
 /// targeted decode seeks to.
 #[derive(Debug, Clone, Copy)]
@@ -526,7 +530,7 @@ fn open_impl(bytes: &[u8]) -> Result<JxlContainer, DecodeError> {
 
     // The scan parses headers and TOCs only (`scan_frames_only` skips section decoding), so
     // `open` stays pixel-free while learning the true visible frame count up front.
-    let mut header: Option<(jxl::api::JxlBasicInfo, Option<Box<[u8]>>, WicPixelFormat)> = None;
+    let mut header: Option<ScannedHeader> = None;
     loop {
         match scanner
             .process(&mut input, None, None)
