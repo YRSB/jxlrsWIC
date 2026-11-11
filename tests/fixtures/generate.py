@@ -96,6 +96,11 @@ def rgb16_primaries_data() -> bytes:
     return bytes(out)
 
 
+def solid_png(path: Path, color: tuple[int, int, int, int], size=(3, 3)) -> None:
+    """Saves a tiny solid-colour RGBA frame."""
+    Image.new("RGBA", size, color).save(path)
+
+
 def main() -> int:
     cjxl = find_tool("cjxl")
     djxl = find_tool("djxl")
@@ -150,6 +155,27 @@ def main() -> int:
         "color_space=RGB_D65_202_Rel_PeQ",
         "--intensity_target=10000",
     )
+
+    # Animated: three solid 3x3 frames (red 100 ms, green 200 ms, blue 300 ms, loop
+    # forever), encoded losslessly from an APNG so cjxl sees the per-frame durations and
+    # the loop count. The committed anim_rgb_3f.jxl is the output of this step.
+    for name, color in (
+        ("anim_rgb_f0.png", (255, 0, 0, 255)),
+        ("anim_rgb_f1.png", (0, 255, 0, 255)),
+        ("anim_rgb_f2.png", (0, 0, 255, 255)),
+    ):
+        solid_png(TMP / name, color)
+    apng = TMP / "anim_rgb.apng"
+    first = Image.open(TMP / "anim_rgb_f0.png")
+    rest = [Image.open(TMP / f"anim_rgb_f{i}.png") for i in (1, 2)]
+    first.save(
+        apng,
+        save_all=True,
+        append_images=rest,
+        duration=[100, 200, 300],
+        loop=0,
+    )
+    encode(cjxl, apng, HERE / "anim_rgb_3f.jxl", "-m", "1")
 
     shutil.rmtree(TMP, ignore_errors=True)
     for path in sorted(HERE.glob("*.jxl")):
