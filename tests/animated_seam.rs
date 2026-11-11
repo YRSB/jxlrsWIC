@@ -12,7 +12,7 @@
 
 use std::path::PathBuf;
 
-use jxlrs_wic::decoder_seam::{DecodeError, JxlContainer, MAX_FRAMES, Rect};
+use jxlrs_wic::decoder_seam::{DecodeError, JxlContainer, Rect, MAX_FRAMES};
 
 /// Loads a committed fixture by name.
 fn fixture(name: &str) -> Vec<u8> {
@@ -38,16 +38,14 @@ fn read_frame(container: &JxlContainer, index: usize) -> Vec<u8> {
 
 #[test]
 fn animated_fixture_reports_three_frames() {
-    let container =
-        JxlContainer::open(&fixture("anim_rgb_3f.jxl")).expect("open animated fixture");
+    let container = JxlContainer::open(&fixture("anim_rgb_3f.jxl")).expect("open animated fixture");
     assert_eq!(container.info().frame_count, 3);
     assert_eq!(container.frame_count(), 3);
 }
 
 #[test]
 fn animated_fixture_carries_the_animation_header() {
-    let container =
-        JxlContainer::open(&fixture("anim_rgb_3f.jxl")).expect("open animated fixture");
+    let container = JxlContainer::open(&fixture("anim_rgb_3f.jxl")).expect("open animated fixture");
     let animation = container.animation().expect("animation header");
     assert_eq!(animation.num_loops, 0);
     assert_eq!(animation.tps_numerator, 1000);
@@ -58,8 +56,7 @@ fn animated_fixture_carries_the_animation_header() {
 
 #[test]
 fn animated_frame_timings_come_from_the_scan() {
-    let container =
-        JxlContainer::open(&fixture("anim_rgb_3f.jxl")).expect("open animated fixture");
+    let container = JxlContainer::open(&fixture("anim_rgb_3f.jxl")).expect("open animated fixture");
     let expected = [(100, 100.0), (200, 200.0), (300, 300.0)];
     for (index, (ticks, ms)) in expected.into_iter().enumerate() {
         let frame = container.frame(index).expect("frame");
@@ -77,8 +74,7 @@ fn animated_frame_timings_come_from_the_scan() {
 
 #[test]
 fn animated_frames_decode_distinct_pixels() {
-    let container =
-        JxlContainer::open(&fixture("anim_rgb_3f.jxl")).expect("open animated fixture");
+    let container = JxlContainer::open(&fixture("anim_rgb_3f.jxl")).expect("open animated fixture");
     let first = read_frame(&container, 0);
     let second = read_frame(&container, 1);
     let third = read_frame(&container, 2);
@@ -97,8 +93,7 @@ fn animated_frames_decode_distinct_pixels() {
 
 #[test]
 fn animated_frames_blits_honour_sub_rectangles() {
-    let container =
-        JxlContainer::open(&fixture("anim_rgb_3f.jxl")).expect("open animated fixture");
+    let container = JxlContainer::open(&fixture("anim_rgb_3f.jxl")).expect("open animated fixture");
     let frame = container.frame(2).expect("frame");
 
     let mut pixel = vec![0u8; 4];
@@ -110,8 +105,7 @@ fn animated_frames_blits_honour_sub_rectangles() {
 
 #[test]
 fn animated_container_rejects_frame_index_out_of_range() {
-    let container =
-        JxlContainer::open(&fixture("anim_rgb_3f.jxl")).expect("open animated fixture");
+    let container = JxlContainer::open(&fixture("anim_rgb_3f.jxl")).expect("open animated fixture");
     assert_eq!(
         container.frame(3).err(),
         Some(DecodeError::FrameIndexOutOfRange {

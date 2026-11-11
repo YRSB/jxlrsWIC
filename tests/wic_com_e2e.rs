@@ -735,7 +735,7 @@ fn corrupt_input_reports_bad_image_without_panicking() {
     let still = fixture("srgb8_lossless.jxl");
     let corrupt_inputs = [
         b"not a jpeg xl stream at all".to_vec(),
-        [&[0xFFu8, 0x0A], &[0u8; 32]].concat(),
+        [&[0xFFu8, 0x0A][..], &[0u8; 32][..]].concat(),
         animated[..animated.len() / 2].to_vec(),
         still[..still.len() / 2].to_vec(),
     ];
