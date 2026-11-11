@@ -1,0 +1,102 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="jxlrsWIC JPEG XL Decoder"
+           Manufacturer="YRSB"
+           Version="$(var.Version)"
+           UpgradeCode="9D8B4D63-0C5F-4E38-928A-56E8191295D3"
+           Scope="perMachine">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="jxlrsWIC">
+        <Component Id="C_JxlrsWicComponent" Guid="*">
+          <File Id="F_jxlrs_wic.dll" Source="$(var.SourceDll)" KeyPath="yes" />
+          <File Id="F_LICENSE" Source="$(var.SourceDir)\LICENSE" />
+          <File Id="F_README" Source="$(var.SourceDir)\README.md" />
+
+          <!-- HKCR\CLSID\{466C040F-E9A9-45F4-BE8A-BF0386B15E28} -->
+          <RegistryKey Root="HKCR" Key="CLSID\{466C040F-E9A9-45F4-BE8A-BF0386B15E28}" ForceDeleteOnUninstall="yes">
+            <RegistryValue Type="string" Value="jxlrsWIC JPEG XL Decoder" />
+            <RegistryValue Name="ArbitrationPriority" Type="integer" Value="0" />
+            <RegistryValue Name="Author" Type="string" Value="YRSB" />
+            <RegistryValue Name="ColorManagementVersion" Type="string" Value="1.0.0.0" />
+            <RegistryValue Name="ContainerFormat" Type="string" Value="{FEC14E3F-427A-4736-AAE6-27ED84F69322}" />
+            <RegistryValue Name="Description" Type="string" Value="Pure Rust JPEG XL WIC Decoder" />
+            <RegistryValue Name="FileExtensions" Type="string" Value=".jxl" />
+            <RegistryValue Name="FriendlyName" Type="string" Value="jxlrsWIC JPEG XL Decoder" />
+            <RegistryValue Name="MimeTypes" Type="string" Value="image/jxl" />
+            <RegistryValue Name="SpecVersion" Type="string" Value="1.0.0.0" />
+            <RegistryValue Name="SupportAnimation" Type="integer" Value="0" />
+            <RegistryValue Name="SupportChromakey" Type="integer" Value="0" />
+            <RegistryValue Name="SupportLossless" Type="integer" Value="1" />
+            <RegistryValue Name="SupportMultiframe" Type="integer" Value="0" />
+            <RegistryValue Name="Vendor" Type="string" Value="{AE1ACFC8-AF90-46DA-A9E3-FC759EA12407}" />
+            <RegistryValue Name="Version" Type="string" Value="$(var.Version)" />
+
+            <!-- InprocServer32 -->
+            <RegistryKey Key="InprocServer32">
+              <RegistryValue Type="string" Value="[#F_jxlrs_wic.dll]" />
+              <RegistryValue Name="ThreadingModel" Type="string" Value="Both" />
+            </RegistryKey>
+
+            <!-- Formats -->
+            <RegistryKey Key="Formats\{6FDDC324-4E03-4BFE-B185-3D77768DC90D}" ForceCreateOnInstall="yes" />
+            <RegistryKey Key="Formats\{6FDDC324-4E03-4BFE-B185-3D77768DC90C}" ForceCreateOnInstall="yes" />
+            <RegistryKey Key="Formats\{6FDDC324-4E03-4BFE-B185-3D77768DC916}" ForceCreateOnInstall="yes" />
+            <RegistryKey Key="Formats\{6FDDC324-4E03-4BFE-B185-3D77768DC90F}" ForceCreateOnInstall="yes" />
+
+            <!-- Pattern 0 (ISO BMFF Box Container) -->
+            <RegistryKey Key="Patterns\0">
+              <RegistryValue Name="Position" Type="integer" Value="0" />
+              <RegistryValue Name="Length" Type="integer" Value="24" />
+              <RegistryValue Name="EndOfStream" Type="integer" Value="0" />
+              <RegistryValue Name="Pattern" Type="binary" Value="0000000C4A584C200D0A870A00000000667479706A786C20" />
+              <RegistryValue Name="Mask" Type="binary" Value="FFFFFFFFFFFFFFFFFFFFFFFF00000000FFFFFFFFFFFFFFFF" />
+            </RegistryKey>
+
+            <!-- Pattern 1 (Bare Codestream) -->
+            <RegistryKey Key="Patterns\1">
+              <RegistryValue Name="Position" Type="integer" Value="0" />
+              <RegistryValue Name="Length" Type="integer" Value="2" />
+              <RegistryValue Name="EndOfStream" Type="integer" Value="0" />
+              <RegistryValue Name="Pattern" Type="binary" Value="FF0A" />
+              <RegistryValue Name="Mask" Type="binary" Value="FFFF" />
+            </RegistryKey>
+          </RegistryKey>
+
+          <!-- CATID_WICBitmapDecoders Instance Registration -->
+          <RegistryKey Root="HKCR" Key="CLSID\{7ED96837-96F0-4812-B211-F13C24117ED3}\Instance\{466C040F-E9A9-45F4-BE8A-BF0386B15E28}" ForceDeleteOnUninstall="yes">
+            <RegistryValue Name="CLSID" Type="string" Value="{466C040F-E9A9-45F4-BE8A-BF0386B15E28}" />
+            <RegistryValue Name="FriendlyName" Type="string" Value="jxlrsWIC JPEG XL Decoder" />
+          </RegistryKey>
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="MainFeature" Title="jxlrsWIC JPEG XL Decoder" Level="1">
+      <ComponentRef Id="C_JxlrsWicComponent" />
+    </Feature>
+
+    <!-- Shell Association Refresh Custom Actions -->
+    <Property Id="POWERSHELL_EXE" Value="[WindowsFolder]System32\WindowsPowerShell\v1.0\powershell.exe" />
+
+    <CustomAction Id="NotifyShellInstall"
+                  Property="POWERSHELL_EXE"
+                  ExeCommand="-NoProfile -NonInteractive -Command &quot;Add-Type -MemberDefinition '[DllImport(\&quot;shell32.dll\&quot;)] public static extern void SHChangeNotify(int e, int f, IntPtr a, IntPtr b);' -Name S -Namespace W; [W.S]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)&quot;"
+                  Execute="immediate"
+                  Return="asyncNoWait" />
+
+    <CustomAction Id="NotifyShellUninstall"
+                  Property="POWERSHELL_EXE"
+                  ExeCommand="-NoProfile -NonInteractive -Command &quot;Add-Type -MemberDefinition '[DllImport(\&quot;shell32.dll\&quot;)] public static extern void SHChangeNotify(int e, int f, IntPtr a, IntPtr b);' -Name S -Namespace W; [W.S]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)&quot;"
+                  Execute="immediate"
+                  Return="asyncNoWait" />
+
+    <InstallExecuteSequence>
+      <Custom Action="NotifyShellInstall" After="InstallFinalize" Condition="NOT Installed" />
+      <Custom Action="NotifyShellUninstall" After="InstallFinalize" Condition="REMOVE=&quot;ALL&quot;" />
+    </InstallExecuteSequence>
+
+  </Package>
+</Wix>

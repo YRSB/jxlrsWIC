@@ -41,7 +41,7 @@ jobs:
       - name: Build release cdylib
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Assemble distribution archive
+      - name: Assemble distribution archive and MSI
         shell: pwsh
         run: |
           $target = "${{ matrix.target }}"
@@ -51,6 +51,10 @@ jobs:
             throw "Expected release cdylib at $dll was not produced"
           }
 
+          # 1. Build MSI installer
+          pwsh -File ./installer/build_msi.ps1 -Target $target -DllPath $dll -OutputDir "dist"
+
+          # 2. Assemble distribution zip archive
           # Staging lives outside `dist`, so every entry uploaded as an artifact is a file.
           # Anything left in `dist` is passed straight to `gh release create`.
           $stage = "stage/$name"
@@ -87,7 +91,7 @@ jobs:
         shell: pwsh
         run: |
           $failures = @()
-          Get-ChildItem dist/*.zip.sha256 | ForEach-Object {
+          Get-ChildItem dist/*.sha256 | ForEach-Object {
             $expected = (Get-Content $_.FullName -Raw).Trim().ToLowerInvariant()
             $archive = $_.FullName -replace '\.sha256$', ''
             $actual = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -131,7 +135,7 @@ jobs:
           cd dist
           # Keep the per-archive .sha256 files: the README tells users to read them. The
           # aggregate file is a convenience for anyone verifying the whole set at once.
-          sha256sum *.zip | tee sha256.sum
+          sha256sum *.zip *.msi | tee sha256.sum
 
       - name: Assert the payload is exactly the expected files
         shell: bash

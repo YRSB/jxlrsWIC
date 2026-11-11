@@ -1,2 +1,6 @@
 /target
 **/*.rs.bk
+.wix
+dist
+stage
+*.log

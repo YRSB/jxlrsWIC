@@ -19,3 +19,7 @@ _Avoid_: Sub-image, page, layer
 **Cached Raster**:
 The decoded in-memory pixel buffer managed behind the Decoder Seam, used to serve subsequent `CopyPixels` requests without re-decoding the underlying bitstream.
 _Avoid_: Frame buffer, pixel cache, decoded cache
+
+**MSI Package**:
+The declarative Windows Installer package (`.msi`) authored via the WiX Toolset that installs `jxlrs_wic.dll` to `Program Files` and manages COM/WIC registry entries and Explorer shell notifications without self-registration.
+_Avoid_: Setup exe, MSIX bundle, installer script

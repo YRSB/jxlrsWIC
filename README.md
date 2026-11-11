@@ -10,16 +10,29 @@ Rust standard library and the Windows API bindings.
 
 ## Install
 
-1. Download the zip for your architecture from the
+### Option A: MSI Installer (Recommended)
+
+1. Download the `.msi` package for your architecture from the
    [releases page](https://github.com/YRSB/jxlrsWIC/releases):
 
-   | Windows                         | Download                               |
-   | ------------------------------- | -------------------------------------- |
-   | Intel / AMD 64-bit              | `jxlrs_wic-x86_64-pc-windows-msvc.zip` |
-   | ARM64 (Surface Pro, Snapdragon) | `jxlrs_wic-aarch64-pc-windows-msvc.zip` |
+   | Architecture                    | MSI Installer                          | Zip Archive (Manual)                   |
+   | ------------------------------- | -------------------------------------- | -------------------------------------- |
+   | Intel / AMD 64-bit (x64)        | `jxlrs_wic-x86_64-pc-windows-msvc.msi` | `jxlrs_wic-x86_64-pc-windows-msvc.zip` |
+   | ARM64 (Surface Pro, Snapdragon) | `jxlrs_wic-aarch64-pc-windows-msvc.msi`| `jxlrs_wic-aarch64-pc-windows-msvc.zip`|
+   | 32-bit (x86)                    | `jxlrs_wic-i686-pc-windows-msvc.msi`   | `jxlrs_wic-i686-pc-windows-msvc.zip`   |
 
-   The bitness must match the process that decodes the image. 64-bit Explorer cannot load
-   a 32-bit DLL, and vice versa.
+2. Double-click the `.msi` installer to install, or run unattended from an elevated prompt:
+
+   ```pwsh
+   msiexec /i jxlrs_wic-x86_64-pc-windows-msvc.msi /qn
+   ```
+
+   The installer places `jxlrs_wic.dll` in `C:\Program Files\jxlrsWIC`, registers all COM/WIC
+   decoder keys declaratively, and automatically notifies Windows Explorer to refresh its icon cache.
+
+### Option B: Manual Registration (Zip)
+
+1. Download and extract the `.zip` archive for your architecture.
 
 2. Verify the download against the published SHA-256:
 
@@ -28,7 +41,7 @@ Rust standard library and the Windows API bindings.
    Get-Content .\jxlrs_wic-x86_64-pc-windows-msvc.zip.sha256
    ```
 
-3. Extract the zip, then open a terminal **as administrator** and register the decoder:
+3. Open a terminal **as administrator** and register the decoder:
 
    ```pwsh
    regsvr32 jxlrs_wic.dll
@@ -47,7 +60,13 @@ Rust standard library and the Windows API bindings.
 
 ## Uninstall
 
-In an administrator terminal, from the directory containing the DLL:
+If installed via MSI, uninstall via Windows **Installed Apps** / **Settings**, or run:
+
+```pwsh
+msiexec /x jxlrs_wic-x86_64-pc-windows-msvc.msi /qn
+```
+
+If registered manually via `regsvr32`, in an administrator terminal from the directory containing the DLL:
 
 ```pwsh
 regsvr32 /u jxlrs_wic.dll

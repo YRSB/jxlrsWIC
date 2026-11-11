@@ -118,9 +118,69 @@ jobs:
           Write-Host "Running WIC unregistration cleanup verification..."
           pwsh -File ./tests/verify_wic_registration.ps1 -DllPath "$dllPath" -Unregistered
 
-      - name: Upload DLL artifact
+      - name: Build MSI package
+        shell: pwsh
+        run: |
+          $dllPath = (Resolve-Path "target/${{ matrix.target }}/release/jxlrs_wic.dll").Path
+          pwsh -File ./installer/build_msi.ps1 -Target "${{ matrix.target }}" -DllPath "$dllPath" -OutputDir "dist"
+
+      - name: Test MSI installation, WIC e2e verification, and clean uninstall
+        if: matrix.run_tests
+        shell: pwsh
+        run: |
+          $msi = (Resolve-Path "dist/jxlrs_wic-${{ matrix.target }}.msi").Path
+          $installedDll = "$env:ProgramFiles\jxlrsWIC\jxlrs_wic.dll"
+          $testExe = Get-ChildItem "target/${{ matrix.target }}/debug/deps/wic_com_e2e-*.exe" |
+            Select-Object -First 1
+          if (-not $testExe) {
+            throw "wic_com_e2e test binary was not built"
+          }
+
+          Write-Host "Installing MSI silently: $msi"
+          $logFile = "$PWD\msi_install.log"
+          $proc = Start-Process msiexec.exe -ArgumentList "/i", "`"$msi`"", "/qn", "/l*v", "`"$logFile`"" -Wait -PassThru
+          if ($proc.ExitCode -ne 0) {
+            Get-Content $logFile -Tail 100
+            throw "MSI installation failed with exit code $($proc.ExitCode)"
+          }
+          Write-Host "MSI installed successfully."
+
+          try {
+            Write-Host "Verifying MSI WIC COM registration..."
+            pwsh -File ./tests/verify_wic_registration.ps1 -DllPath "$installedDll"
+
+            $env:JXLRS_REQUIRE_COM = "1"
+            Write-Host "Running headless WIC COM end-to-end suite against MSI installed decoder..."
+            & $testExe.FullName --test-threads=1
+            if ($LASTEXITCODE -ne 0) {
+              throw "WIC end-to-end suite failed against MSI installed decoder with exit code $LASTEXITCODE"
+            }
+          }
+          finally {
+            Write-Host "Uninstalling MSI silently..."
+            $unlogFile = "$PWD\msi_uninstall.log"
+            $unproc = Start-Process msiexec.exe -ArgumentList "/x", "`"$msi`"", "/qn", "/l*v", "`"$unlogFile`"" -Wait -PassThru
+            if ($unproc.ExitCode -ne 0) {
+              Get-Content $unlogFile -Tail 100
+              throw "MSI uninstallation failed with exit code $($unproc.ExitCode)"
+            }
+            Write-Host "MSI uninstalled successfully."
+          }
+
+          Write-Host "Verifying MSI WIC unregistration cleanup..."
+          pwsh -File ./tests/verify_wic_registration.ps1 -DllPath "$installedDll" -Unregistered
+
+          if (Test-Path "$env:ProgramFiles\jxlrsWIC") {
+            throw "Failed: Folder $env:ProgramFiles\jxlrsWIC still exists after uninstallation!"
+          }
+          Write-Host "All MSI install, WIC e2e, and clean uninstall checks passed!" -ForegroundColor Green
+
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: jxlrs_wic-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/jxlrs_wic.dll
+          path: |
+            target/${{ matrix.target }}/release/jxlrs_wic.dll
+            dist/jxlrs_wic-${{ matrix.target }}.msi
+            dist/jxlrs_wic-${{ matrix.target }}.msi.sha256
           if-no-files-found: error
