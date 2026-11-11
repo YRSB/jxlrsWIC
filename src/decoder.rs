@@ -15,13 +15,12 @@ use windows::Win32::Graphics::Imaging::{
     IWICBitmapDecoder, IWICBitmapDecoderInfo, IWICBitmapDecoder_Impl, IWICBitmapFrameDecode,
     IWICBitmapFrameDecode_Impl, IWICBitmapSource, IWICBitmapSource_Impl, IWICColorContext,
     IWICColorContext_Impl, IWICImagingFactory, IWICMetadataQueryReader,
-    IWICMetadataQueryReader_Impl, IWICPalette,
-    WICBitmapDecoderCapabilityCanDecodeAllImages, WICColorContextProfile, WICDecodeOptions,
-    WICRect,
+    IWICMetadataQueryReader_Impl, IWICPalette, WICBitmapDecoderCapabilityCanDecodeAllImages,
+    WICColorContextProfile, WICDecodeOptions, WICRect,
 };
 use windows::Win32::System::Com::{
-    CLSCTX_INPROC_SERVER, CoCreateInstance, CoTaskMemAlloc, IEnumString, IEnumString_Impl,
-    IStream, STATFLAG_NONAME, STREAM_SEEK_CUR, STREAM_SEEK_SET,
+    CoCreateInstance, CoTaskMemAlloc, IEnumString, IEnumString_Impl, IStream, CLSCTX_INPROC_SERVER,
+    STATFLAG_NONAME, STREAM_SEEK_CUR, STREAM_SEEK_SET,
 };
 
 use crate::decoder_seam::{
@@ -84,7 +83,7 @@ unsafe fn ingest_stream(stream: &IStream) -> Result<Vec<u8>> {
     let mut start = 0u64;
     stream.Seek(0, STREAM_SEEK_SET, Some(&mut start))?;
 
-    let stat = std::mem::zeroed();
+    let mut stat = std::mem::zeroed();
     let sized = stream.Stat(&mut stat, STATFLAG_NONAME).is_ok() && stat.cbSize > 0;
     let length = if sized { stat.cbSize } else { 0u64 };
     ensure_within_stream_limit(length)?;
@@ -376,7 +375,9 @@ impl JxlDecoderMetadataReader {
         if name == APP_EXTENSION_PATH {
             Some(PROPVARIANT::from(NETSCAPE_APPLICATION_ID))
         } else if name == APP_DATA_PATH {
-            Some(PROPVARIANT::from(loop_count_text(animation.num_loops).as_str()))
+            Some(PROPVARIANT::from(
+                loop_count_text(animation.num_loops).as_str(),
+            ))
         } else {
             None
         }
@@ -404,11 +405,10 @@ impl IWICMetadataQueryReader_Impl for JxlDecoderMetadataReader_Impl {
     }
 
     fn GetEnumerator(&self) -> Result<IEnumString> {
-        Ok(JxlPathEnumerator::new(vec![
-            wide_nul(APP_EXTENSION_PATH),
-            wide_nul(APP_DATA_PATH),
-        ])
-        .into())
+        Ok(
+            JxlPathEnumerator::new(vec![wide_nul(APP_EXTENSION_PATH), wide_nul(APP_DATA_PATH)])
+                .into(),
+        )
     }
 }
 
@@ -438,7 +438,9 @@ impl JxlFrameMetadataReader {
             return None;
         }
         let frame = self.container.frame(self.index).ok()?;
-        Some(PROPVARIANT::from(delay_centiseconds(frame.timing().duration_ms)))
+        Some(PROPVARIANT::from(delay_centiseconds(
+            frame.timing().duration_ms,
+        )))
     }
 }
 
@@ -847,7 +849,8 @@ impl IWICBitmapDecoder_Impl for JxlWicDecoder_Impl {
         let _ = container
             .frame(index as usize)
             .map_err(|err| windows::core::Error::from(to_hresult(&err)))?;
-        let decode: IWICBitmapFrameDecode = JxlFrameDecode::new(container, index as usize).into();
+        let decode: IWICBitmapFrameDecode =
+            JxlFrameDecode::new(container, index as usize).into();
         Ok(decode)
     }
 }
