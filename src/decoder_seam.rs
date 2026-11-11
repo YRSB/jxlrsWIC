@@ -261,12 +261,7 @@ impl CachedRaster {
         Ok(CopyPlan { resolved, stride })
     }
 
-    fn blit(
-        &self,
-        rect: Option<Rect>,
-        stride: usize,
-        out: &mut [u8],
-    ) -> Result<(), DecodeError> {
+    fn blit(&self, rect: Option<Rect>, stride: usize, out: &mut [u8]) -> Result<(), DecodeError> {
         let plan = self.plan(rect, stride, out.len())?;
         let src_stride = self.format.row_bytes(self.width);
         let row_len = self.format.row_bytes(plan.resolved.width);
@@ -800,7 +795,9 @@ mod tests {
 
     #[test]
     fn clips_zero_sized_rect_to_frame_edge() {
-        let plan = test_raster().plan(Some(Rect::new(1, 0, 0, 0)), 4, 8).unwrap();
+        let plan = test_raster()
+            .plan(Some(Rect::new(1, 0, 0, 0)), 4, 8)
+            .unwrap();
         assert_eq!(plan.resolved, Rect::new(1, 0, 1, 2));
     }
 
