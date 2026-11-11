@@ -10,10 +10,8 @@
 
     <StandardDirectory Id="ProgramFiles6432Folder">
       <Directory Id="INSTALLFOLDER" Name="jxlrsWIC">
-        <Component Id="C_JxlrsWicComponent" Guid="*">
+        <Component Id="C_JxlrsWicDll" Guid="615A87B2-C4B8-44A7-87FD-48B8BEBD0461">
           <File Id="F_jxlrs_wic.dll" Source="$(var.SourceDll)" KeyPath="yes" />
-          <File Id="F_LICENSE" Source="$(var.SourceDir)\LICENSE" />
-          <File Id="F_README" Source="$(var.SourceDir)\README.md" />
 
           <!-- HKCR\CLSID\{466C040F-E9A9-45F4-BE8A-BF0386B15E28} -->
           <RegistryKey Root="HKCR" Key="CLSID\{466C040F-E9A9-45F4-BE8A-BF0386B15E28}" ForceDeleteOnUninstall="yes">
@@ -71,11 +69,21 @@
             <RegistryValue Name="FriendlyName" Type="string" Value="jxlrsWIC JPEG XL Decoder" />
           </RegistryKey>
         </Component>
+
+        <Component Id="C_License" Guid="8BCFB3A4-BCB5-4D65-B6D2-658E0AE761D9">
+          <File Id="F_LICENSE" Source="$(var.SourceDir)\LICENSE" KeyPath="yes" />
+        </Component>
+
+        <Component Id="C_Readme" Guid="29BA2DE1-9878-438B-B0D2-E403DC014168">
+          <File Id="F_README" Source="$(var.SourceDir)\README.md" KeyPath="yes" />
+        </Component>
       </Directory>
     </StandardDirectory>
 
     <Feature Id="MainFeature" Title="jxlrsWIC JPEG XL Decoder" Level="1">
-      <ComponentRef Id="C_JxlrsWicComponent" />
+      <ComponentRef Id="C_JxlrsWicDll" />
+      <ComponentRef Id="C_License" />
+      <ComponentRef Id="C_Readme" />
     </Feature>
 
     <!-- Shell Association Refresh Custom Actions -->
