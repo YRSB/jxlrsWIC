@@ -849,8 +849,7 @@ impl IWICBitmapDecoder_Impl for JxlWicDecoder_Impl {
         let _ = container
             .frame(index as usize)
             .map_err(|err| windows::core::Error::from(to_hresult(&err)))?;
-        let decode: IWICBitmapFrameDecode =
-            JxlFrameDecode::new(container, index as usize).into();
+        let decode: IWICBitmapFrameDecode = JxlFrameDecode::new(container, index as usize).into();
         Ok(decode)
     }
 }
