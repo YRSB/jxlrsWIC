@@ -10,13 +10,14 @@
 use std::path::PathBuf;
 
 // `Interface` is needed for the `IClassFactory::IID` associated constant.
-use windows::core::{IUnknown, Interface, GUID};
+use windows::core::{IUnknown, Interface, GUID, PCWSTR, PROPVARIANT};
 use windows::Win32::Graphics::Imaging::{
-    IWICBitmapDecoder, IWICBitmapFrameDecode, IWICImagingFactory,
+    IWICBitmapDecoder, IWICBitmapFrameDecode, IWICImagingFactory, IWICMetadataQueryReader,
     WICBitmapDecoderCapabilityCanDecodeAllImages, WICDecodeMetadataCacheOnDemand, WICRect,
 };
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, IStream, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
+    CoCreateInstance, CoInitializeEx, CoTaskMemFree, IEnumString, IStream, CLSCTX_INPROC_SERVER,
+    COINIT_APARTMENTTHREADED,
 };
 use windows::Win32::UI::Shell::SHCreateMemStream;
 
@@ -29,6 +30,9 @@ const WINCODEC_ERR_CODECNOTHUMBNAIL: i32 = 0x88982F44_u32 as i32;
 const WINCODEC_ERR_PALETTEUNAVAILABLE: i32 = 0x88982F45_u32 as i32;
 const WINCODEC_ERR_UNSUPPORTEDOPERATION: i32 = 0x88982F81_u32 as i32;
 const WINCODEC_ERR_WRONGSTATE: i32 = 0x88982F04_u32 as i32;
+const WINCODEC_ERR_BADIMAGE: i32 = 0x88982F60_u32 as i32;
+const WINCODEC_ERR_FRAMEMISSING: i32 = 0x88982F62_u32 as i32;
+const WINCODEC_ERR_PROPERTYNOTFOUND: i32 = 0x88982F40_u32 as i32;
 
 fn fixture(name: &str) -> Vec<u8> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -84,6 +88,15 @@ fn create_factory() -> IWICImagingFactory {
 
 /// Opens a decoder over a named fixture, asserting the container contract along the way.
 fn open_fixture(decoder: &IWICBitmapDecoder, name: &str) -> IWICBitmapFrameDecode {
+    open_frames(decoder, name, 1).remove(0)
+}
+
+/// Opens a decoder over a named fixture with an expected frame count, returning every frame.
+fn open_frames(
+    decoder: &IWICBitmapDecoder,
+    name: &str,
+    expected_count: u32,
+) -> Vec<IWICBitmapFrameDecode> {
     let bytes = fixture(name);
     let stream = memory_stream(&bytes);
 
@@ -97,8 +110,84 @@ fn open_fixture(decoder: &IWICBitmapDecoder, name: &str) -> IWICBitmapFrameDecod
             decoder.GetContainerFormat().expect("GetContainerFormat"),
             GUID_ContainerFormatJxl
         );
-        assert_eq!(decoder.GetFrameCount().expect("GetFrameCount"), 1);
-        decoder.GetFrame(0).expect("GetFrame(0)")
+        assert_eq!(
+            decoder.GetFrameCount().expect("GetFrameCount"),
+            expected_count,
+            "{name} must report {expected_count} frame(s)"
+        );
+        (0..expected_count)
+            .map(|index| {
+                decoder
+                    .GetFrame(index)
+                    .unwrap_or_else(|err| panic!("GetFrame({index}) of {name} failed: {err}"))
+            })
+            .collect()
+    }
+}
+
+/// Reads one metadata query path from `reader` as a `u16` (`VT_UI2`, e.g. `/grctlext/Delay`).
+fn query_u16(reader: &IWICMetadataQueryReader, path: &str) -> u16 {
+    let wide: Vec<u16> = path.encode_utf16().chain([0]).collect();
+    let mut value = PROPVARIANT::default();
+    // SAFETY: `wide` is NUL-terminated and `value` is a valid empty PROPVARIANT slot.
+    unsafe {
+        reader
+            .GetMetadataByName(PCWSTR(wide.as_ptr()), &mut value)
+            .unwrap_or_else(|err| panic!("GetMetadataByName({path}) failed: {err}"));
+    }
+    // `u16::try_from` coerces numerically but a VT_UI2 must survive the round trip exactly.
+    let delay = u16::try_from(&value)
+        .unwrap_or_else(|err| panic!("{path} is not VT_UI2: {err} (value: {value:?})"));
+    let round_tripped = PROPVARIANT::from(delay);
+    assert_eq!(
+        value, round_tripped,
+        "{path} must be a plain VT_UI2 (value: {value:?})"
+    );
+    std::mem::forget(value);
+    std::mem::forget(round_tripped);
+    delay
+}
+
+/// Reads one metadata query path from `reader` as a `String` (`VT_LPWSTR`, e.g. `/appext/data`).
+fn query_string(reader: &IWICMetadataQueryReader, path: &str) -> String {
+    let wide: Vec<u16> = path.encode_utf16().chain([0]).collect();
+    let mut value = PROPVARIANT::default();
+    // SAFETY: `wide` is NUL-terminated and `value` is a valid empty PROPVARIANT slot.
+    unsafe {
+        reader
+            .GetMetadataByName(PCWSTR(wide.as_ptr()), &mut value)
+            .unwrap_or_else(|err| panic!("GetMetadataByName({path}) failed: {err}"));
+    }
+    // The COM layer writes `VT_LPWSTR`; convert via BSTR so a wrong variant fails loudly.
+    let text = windows::core::BSTR::try_from(&value)
+        .map(|text| text.to_string())
+        .unwrap_or_else(|err| panic!("{path} is not a string: {err} (value: {value:?})"));
+    std::mem::forget(value);
+    text
+}
+
+/// Collects every path a metadata reader enumerates.
+fn enumerator_paths(reader: &IWICMetadataQueryReader) -> Vec<String> {
+    // SAFETY: the reader is live; Next writes CoTaskMemAlloc'd strings the caller frees.
+    unsafe {
+        let enumerator: IEnumString = reader.GetEnumerator().expect("GetEnumerator");
+        let mut paths = Vec::new();
+        loop {
+            let mut slot = [windows::core::PWSTR::null()];
+            let mut fetched = 0u32;
+            let hr = enumerator.Next(&mut slot, Some(&mut fetched));
+            if hr.is_err() || fetched == 0 {
+                if !slot[0].is_null() {
+                    CoTaskMemFree(Some(slot[0].0 as *const _));
+                }
+                break;
+            }
+            assert_eq!(fetched, 1);
+            let text = slot[0].to_string().expect("enumerator string");
+            CoTaskMemFree(Some(slot[0].0 as *const _));
+            paths.push(text);
+        }
+        paths
     }
 }
 
@@ -471,6 +560,203 @@ fn queries_signatures_without_claiming_foreign_streams() {
         assert_eq!(
             capability, WICBitmapDecoderCapabilityCanDecodeAllImages.0 as u32,
             "both JPEG XL signatures must be recognised"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Animated JPEG XL (issue #14)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn animated_fixture_reports_three_frames_with_distinct_pixels() {
+    let Some(decoder) = create_decoder() else {
+        return;
+    };
+    let frames = open_frames(&decoder, "anim_rgb_3f.jxl", 3);
+
+    let mut rasters = Vec::new();
+    for (index, frame) in frames.iter().enumerate() {
+        // SAFETY: `GetSize` only reads frame state into caller-owned out-parameters.
+        let (mut width, mut height) = (0u32, 0u32);
+        unsafe {
+            frame
+                .GetSize(&mut width, &mut height)
+                .expect("animated GetSize");
+        }
+        assert_eq!((width, height), (3, 3), "frame {index} must be 3x3");
+        let (_, _, _, pixels) = read_pixels(frame);
+        rasters.push(pixels);
+    }
+
+    // The fixture encodes solid red, green, then blue frames; 32bppBGRA stores them B-G-R-A.
+    assert_eq!(&rasters[0][..4], &[0, 0, 255, 255], "frame 0 is red");
+    assert_eq!(&rasters[1][..4], &[0, 255, 0, 255], "frame 1 is green");
+    assert_eq!(&rasters[2][..4], &[255, 0, 0, 255], "frame 2 is blue");
+    assert_ne!(rasters[0], rasters[1]);
+    assert_ne!(rasters[1], rasters[2]);
+}
+
+#[test]
+fn animated_out_of_range_frame_is_missing() {
+    let Some(decoder) = create_decoder() else {
+        return;
+    };
+    let _frames = open_frames(&decoder, "anim_rgb_3f.jxl", 3);
+
+    // SAFETY: `GetFrame` only reads decoder state.
+    let missing = unsafe { decoder.GetFrame(3) };
+    assert_eq!(
+        missing.err().map(|err| err.code().0),
+        Some(WINCODEC_ERR_FRAMEMISSING),
+        "the first out-of-range index must report WINCODEC_ERR_FRAMEMISSING"
+    );
+}
+
+#[test]
+fn animated_frames_expose_gif_compatible_delays() {
+    let Some(decoder) = create_decoder() else {
+        return;
+    };
+    let frames = open_frames(&decoder, "anim_rgb_3f.jxl", 3);
+
+    // The fixture carries 100/200/300 ms frame durations; the reader converts them with
+    // round(ms / 10) into VT_UI2 centiseconds, matching the GIF /grctlext/Delay precedent.
+    for (frame, expected_delay) in frames.iter().zip([10u16, 20, 30]) {
+        // SAFETY: the frame is live; the reader is owned by the caller.
+        let reader = unsafe { frame.GetMetadataQueryReader() }.expect("frame reader");
+        assert_eq!(
+            unsafe { reader.GetContainerFormat() }.expect("reader container"),
+            GUID_ContainerFormatJxl
+        );
+        assert_eq!(
+            query_u16(&reader, "/grctlext/Delay"),
+            expected_delay,
+            "delay must be round(duration_ms / 10)"
+        );
+        assert_eq!(enumerator_paths(&reader), ["/grctlext/Delay"]);
+    }
+}
+
+#[test]
+fn animated_decoder_exposes_loop_count_forever() {
+    let Some(decoder) = create_decoder() else {
+        return;
+    };
+    let _frames = open_frames(&decoder, "anim_rgb_3f.jxl", 3);
+
+    // SAFETY: the decoder is live; the reader is owned by the caller.
+    let reader = unsafe { decoder.GetMetadataQueryReader() }.expect("decoder reader");
+    assert_eq!(
+        unsafe { reader.GetContainerFormat() }.expect("reader container"),
+        GUID_ContainerFormatJxl
+    );
+    assert_eq!(
+        query_string(&reader, "/appext/application"),
+        "NETSCAPE2.0",
+        "application id follows the GIF NETSCAPE extension"
+    );
+    assert_eq!(
+        query_string(&reader, "/appext/data"),
+        "0",
+        "loop count 0 means loop forever, matching the NETSCAPE2.0 semantics"
+    );
+    assert_eq!(
+        enumerator_paths(&reader),
+        ["/appext/application", "/appext/data"]
+    );
+}
+
+#[test]
+fn animated_unknown_metadata_path_is_not_found() {
+    let Some(decoder) = create_decoder() else {
+        return;
+    };
+    let frames = open_frames(&decoder, "anim_rgb_3f.jxl", 3);
+
+    // SAFETY: readers are live and owned by the caller.
+    let decoder_reader = unsafe { decoder.GetMetadataQueryReader() }.expect("decoder reader");
+    let frame_reader = unsafe { frames[0].GetMetadataQueryReader() }.expect("frame reader");
+    for reader in [&decoder_reader, &frame_reader] {
+        let wide: Vec<u16> = "/nope/missing\0".encode_utf16().collect();
+        let mut value = PROPVARIANT::default();
+        let result = unsafe { reader.GetMetadataByName(PCWSTR(wide.as_ptr()), &mut value) };
+        assert_eq!(
+            result.err().map(|err| err.code().0),
+            Some(WINCODEC_ERR_PROPERTYNOTFOUND),
+            "unknown paths surface as WINCODEC_ERR_PROPERTYNOTFOUND, not a decode failure"
+        );
+        std::mem::forget(value);
+    }
+}
+
+#[test]
+fn still_images_report_a_single_frame() {
+    let Some(decoder) = create_decoder() else {
+        return;
+    };
+    let _frame = open_fixture(&decoder, "srgb8_lossless.jxl");
+
+    // SAFETY: `GetFrameCount` only reads decoder state.
+    assert_eq!(
+        unsafe { decoder.GetFrameCount() }.expect("GetFrameCount"),
+        1
+    );
+    // SAFETY: `GetFrame` only reads decoder state.
+    let missing = unsafe { decoder.GetFrame(1) };
+    assert_eq!(
+        missing.err().map(|err| err.code().0),
+        Some(WINCODEC_ERR_FRAMEMISSING),
+        "a still image has no second frame"
+    );
+}
+
+#[test]
+fn still_images_keep_legacy_metadata_errors() {
+    let Some(decoder) = create_decoder() else {
+        return;
+    };
+    let frame = open_fixture(&decoder, "srgb8_lossless.jxl");
+
+    // Still images carry no animation header, so both readers stay unsupported.
+    // SAFETY: these calls only read decoder and frame state.
+    unsafe {
+        assert_eq!(
+            decoder
+                .GetMetadataQueryReader()
+                .err()
+                .map(|err| err.code().0),
+            Some(WINCODEC_ERR_UNSUPPORTEDOPERATION)
+        );
+        assert_eq!(
+            frame.GetMetadataQueryReader().err().map(|err| err.code().0),
+            Some(WINCODEC_ERR_UNSUPPORTEDOPERATION)
+        );
+    }
+}
+
+#[test]
+fn corrupt_input_reports_bad_image_without_panicking() {
+    let animated = fixture("anim_rgb_3f.jxl");
+    let still = fixture("srgb8_lossless.jxl");
+    let corrupt_inputs = [
+        b"not a jpeg xl stream at all".to_vec(),
+        [&[0xFFu8, 0x0A][..], &[0u8; 32][..]].concat(),
+        animated[..animated.len() / 2].to_vec(),
+        still[..still.len() / 2].to_vec(),
+    ];
+    // A fresh decoder per input: Initialize publishes the container exactly once.
+    for corrupt in &corrupt_inputs {
+        let Some(decoder) = create_decoder() else {
+            return;
+        };
+        let stream = memory_stream(corrupt);
+        // SAFETY: the stream is alive for the call.
+        let result = unsafe { decoder.Initialize(&stream, WICDecodeMetadataCacheOnDemand) };
+        assert_eq!(
+            result.err().map(|err| err.code().0),
+            Some(WINCODEC_ERR_BADIMAGE),
+            "corrupt input must report WINCODEC_ERR_BADIMAGE"
         );
     }
 }

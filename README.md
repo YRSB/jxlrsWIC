@@ -91,7 +91,7 @@ tasklist /m jxlrs_wic.dll
 | Embedded ICC profile    | Returned verbatim                                      |
 | CICP / parametric gamut | Synthesised into a WIC colour context                  |
 | Containers              | ISO BMFF (`0000000cJXL `) and bare codestream (`ff0a`) |
-| Animated JPEG XL        | Not yet; frame 0 of an animation decodes               |
+| Animated JPEG XL        | Yes: `GetFrameCount` reports the visible frame count and each `GetFrame(i)` decodes its own frame; durations (`/grctlext/Delay`, centiseconds) and the loop count (`/appext`, `NETSCAPE2.0`, `0` = forever) are exposed through the metadata query readers, following the GIF precedent |
 | Encoding                | Out of scope                                           |
 | `GetDecoderInfo`        | Answered from the registration entries                 |
 
@@ -116,7 +116,10 @@ The value is clamped to `1..=64`; anything that is not a positive integer falls 
 default. Setting `1` makes decoding single-threaded.
 
 Only the first `CopyPixels` for a frame performs the decode; every later call on that Frame
-Decode reads the Cached Raster, so the threads are not touched again.
+Decode reads the Cached Raster, so the threads are not touched again. Each animation frame
+decodes this way exactly once, on first use, so hosts that only touch frame 0 pay for a
+single frame; still images behave exactly as before. Frames decode across all available
+cores through the same per-decode `ThreadRunner` the still path reuses.
 
 ## Building from source
 
