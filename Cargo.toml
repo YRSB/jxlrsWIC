@@ -1,6 +1,6 @@
 [package]
 name = "jxlrs_wic"
-version = "0.1.5"
+version = "0.2.0"
 edition = "2021"
 authors = ["YRSB"]
 description = "Pure Rust Windows Imaging Component (WIC) decoder for JPEG XL"
