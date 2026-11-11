@@ -698,7 +698,10 @@ fn still_images_report_a_single_frame() {
     let _frame = open_fixture(&decoder, "srgb8_lossless.jxl");
 
     // SAFETY: `GetFrameCount` only reads decoder state.
-    assert_eq!(unsafe { decoder.GetFrameCount() }.expect("GetFrameCount"), 1);
+    assert_eq!(
+        unsafe { decoder.GetFrameCount() }.expect("GetFrameCount"),
+        1
+    );
     // SAFETY: `GetFrame` only reads decoder state.
     let missing = unsafe { decoder.GetFrame(1) };
     assert_eq!(
@@ -719,7 +722,10 @@ fn still_images_keep_legacy_metadata_errors() {
     // SAFETY: these calls only read decoder and frame state.
     unsafe {
         assert_eq!(
-            decoder.GetMetadataQueryReader().err().map(|err| err.code().0),
+            decoder
+                .GetMetadataQueryReader()
+                .err()
+                .map(|err| err.code().0),
             Some(WINCODEC_ERR_UNSUPPORTEDOPERATION)
         );
         assert_eq!(
