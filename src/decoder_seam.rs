@@ -12,6 +12,7 @@ use std::sync::OnceLock;
 use jxl::api::{
     Endianness, Event, JxlBitDepth, JxlColorEncoding, JxlColorProfile, JxlColorType, JxlDataFormat,
     JxlDecoder, JxlDecoderOptions, JxlOutputBuffer, JxlPixelFormat, JxlTransferFunction,
+    VisibleFrameSeekTarget,
 };
 
 /// Largest accepted image edge. Larger dimensions are rejected before any pixel allocation.
@@ -19,6 +20,11 @@ pub const MAX_DIMENSION: u32 = 16_384;
 
 /// Largest accepted input stream, in bytes. Guards host processes against bitstream bombs.
 pub const MAX_STREAM_BYTES: usize = 256 * 1024 * 1024;
+
+/// Largest accepted visible frame count. Bounds scan state for pathological bitstreams that
+/// declare thousands of frames; each lazily decoded raster is still bounded by
+/// [`MAX_DIMENSION`], so multi-frame memory only grows with frames the host actually touches.
+pub const MAX_FRAMES: usize = 4_096;
 
 /// Default resolution reported for images whose bitstream carries no physical pixel size.
 const DEFAULT_DPI: f64 = 72.0;
@@ -37,11 +43,51 @@ pub fn is_jpeg_xl(bytes: &[u8]) -> bool {
     bytes.starts_with(&CONTAINER_SIGNATURE) || bytes.starts_with(&CODESTREAM_SIGNATURE)
 }
 
-/// A decoded still image container metadata readout.
+/// Decoded container metadata readout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ContainerInfo {
-    /// Number of decodable frames. Animated JPEG XL is out of scope, so this is always 1.
+    /// Number of decodable (visible) frames. Still images report 1.
     pub frame_count: usize,
+}
+
+/// Animation header of the container, copied verbatim from `JxlBasicInfo::animation`.
+///
+/// [`JxlContainer::animation`] returns `None` for still images; the COM layer then keeps the
+/// legacy still-image behaviour (no duration or loop metadata).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AnimationInfo {
+    /// Loop count; 0 means loop forever, matching the GIF NETSCAPE extension semantics.
+    pub num_loops: u32,
+    /// Ticks per second, numerator.
+    pub tps_numerator: u32,
+    /// Ticks per second, denominator.
+    pub tps_denominator: u32,
+    /// Whether the bitstream carries timecodes.
+    pub have_timecodes: bool,
+}
+
+impl AnimationInfo {
+    /// Ticks per second as a float; 0.0 when the header carries no usable rate.
+    pub fn ticks_per_second(&self) -> f64 {
+        if self.tps_numerator == 0 || self.tps_denominator == 0 {
+            0.0
+        } else {
+            self.tps_numerator as f64 / self.tps_denominator as f64
+        }
+    }
+}
+
+/// Per-frame playback timing, copied verbatim from the upstream scan record.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FrameTiming {
+    /// Frame duration in animation ticks.
+    pub duration_ticks: u32,
+    /// Frame duration in milliseconds; 0.0 for still images and the last frame.
+    pub duration_ms: f64,
+    /// Whether decoding can start directly at this frame with no earlier decoder state.
+    pub is_keyframe: bool,
+    /// Whether this is the last visible frame.
+    pub is_last: bool,
 }
 
 /// Everything the COM layer needs to answer `IWICBitmapSource` queries for a frame.
@@ -297,18 +343,33 @@ impl AlignedRaster {
 struct FrameReadout {
     info: FrameInfo,
     color_profile: Option<Box<[u8]>>,
+    timing: FrameTiming,
+    /// Scan checkpoint for a targeted decode. `None` only for frame 0 of a still image, which
+    /// keeps the legacy sequential decode path bit-for-bit.
+    seek_target: Option<VisibleFrameSeekTarget>,
+}
+
+/// One visible frame discovered by the container scan: playback timing plus the checkpoint a
+/// targeted decode seeks to.
+#[derive(Debug, Clone, Copy)]
+struct ScannedFrame {
+    timing: FrameTiming,
+    seek_target: VisibleFrameSeekTarget,
 }
 
 /// A decoded JPEG XL image container.
 ///
-/// Encapsulates container and frame metadata, bitstream bytes, and a lazily decoded
-/// in-memory [`CachedRaster`] behind a concrete pure-Rust interface free of COM and Win32 types.
+/// Encapsulates container and frame metadata, bitstream bytes, and lazily decoded per-frame
+/// in-memory [`CachedRaster`]s behind a concrete pure-Rust interface free of COM and Win32 types.
+/// Each frame decodes on first use and is retained afterwards; still images (one visible frame,
+/// no animation header) decode frame 0 through the original sequential path.
 #[derive(Debug)]
 pub struct JxlContainer {
     info: ContainerInfo,
+    animation: Option<AnimationInfo>,
     bitstream: Box<[u8]>,
-    frame: FrameReadout,
-    cached_raster: OnceLock<Result<CachedRaster, DecodeError>>,
+    frames: Box<[FrameReadout]>,
+    rasters: Vec<OnceLock<Result<CachedRaster, DecodeError>>>,
 }
 
 /// Alias for [`JxlContainer`].
@@ -318,6 +379,7 @@ pub type JxlImage = JxlContainer;
 #[derive(Debug, Clone, Copy)]
 pub struct JxlFrame<'a> {
     container: &'a JxlContainer,
+    index: usize,
 }
 
 impl JxlContainer {
@@ -350,17 +412,25 @@ impl JxlContainer {
                 frame_count: self.info.frame_count,
             });
         }
-        Ok(JxlFrame { container: self })
+        Ok(JxlFrame {
+            container: self,
+            index,
+        })
+    }
+
+    /// Animation header, or `None` for still images.
+    pub fn animation(&self) -> Option<&AnimationInfo> {
+        self.animation.as_ref()
     }
 
     /// Frame metadata for the primary frame.
     pub fn frame_info(&self) -> &FrameInfo {
-        &self.frame.info
+        &self.frames[0].info
     }
 
     /// ICC profile bytes for the primary frame, if present.
     pub fn color_profile(&self) -> Option<&[u8]> {
-        self.frame.color_profile.as_deref()
+        self.frames[0].color_profile.as_deref()
     }
 
     /// Copies the requested region of the primary frame into `out`.
@@ -370,15 +440,20 @@ impl JxlContainer {
         stride: usize,
         out: &mut [u8],
     ) -> Result<(), DecodeError> {
-        self.raster()?.blit(rect, stride, out)
+        self.frame_raster(0)?.blit(rect, stride, out)
     }
 
-    /// Decodes (once) and returns a reference to the full raster for this container.
-    fn raster(&self) -> Result<&CachedRaster, DecodeError> {
-        let info = &self.frame.info;
-        match self.cached_raster.get_or_init(|| {
-            decode_raster(&self.bitstream, info.width, info.height, info.pixel_format)
-        }) {
+    /// Decodes (once per frame) and returns a reference to the full raster of frame `index`.
+    fn frame_raster(&self, index: usize) -> Result<&CachedRaster, DecodeError> {
+        let readout = self.frames.get(index).ok_or(DecodeError::FrameIndexOutOfRange {
+            index,
+            frame_count: self.info.frame_count,
+        })?;
+        let slot = self.rasters.get(index).ok_or(DecodeError::FrameIndexOutOfRange {
+            index,
+            frame_count: self.info.frame_count,
+        })?;
+        match slot.get_or_init(|| decode_raster_indexed(&self.bitstream, readout)) {
             Ok(raster) => Ok(raster),
             Err(err) => Err(err.clone()),
         }
@@ -386,14 +461,24 @@ impl JxlContainer {
 }
 
 impl<'a> JxlFrame<'a> {
+    /// Zero-based index of this frame among the container's visible frames.
+    pub fn index(&self) -> usize {
+        self.index
+    }
+
+    /// Playback timing of this frame, from the container scan.
+    pub fn timing(&self) -> &'a FrameTiming {
+        &self.container.frames[self.index].timing
+    }
+
     /// Frame metadata, including dimensions and pixel format.
     pub fn info(&self) -> &'a FrameInfo {
-        self.container.frame_info()
+        &self.container.frames[self.index].info
     }
 
     /// ICC color profile bytes for this frame, extracted verbatim or synthesized from CICP.
     pub fn color_profile(&self) -> Option<&'a [u8]> {
-        self.container.color_profile()
+        self.container.frames[self.index].color_profile.as_deref()
     }
 
     /// Copies the requested region into `out`, honouring an arbitrary destination row stride.
@@ -403,7 +488,7 @@ impl<'a> JxlFrame<'a> {
         stride: usize,
         out: &mut [u8],
     ) -> Result<(), DecodeError> {
-        self.container.copy_pixels(rect, stride, out)
+        self.container.frame_raster(self.index)?.blit(rect, stride, out)
     }
 }
 
@@ -426,52 +511,112 @@ pub fn open(bytes: &[u8]) -> Result<JxlContainer, DecodeError> {
 
 #[allow(clippy::field_reassign_with_default)]
 fn open_impl(bytes: &[u8]) -> Result<JxlContainer, DecodeError> {
-    let mut options = JxlDecoderOptions::default();
-    options.alpha_mode = jxl::api::AlphaMode::Unpremultiplied;
-    let mut decoder = JxlDecoder::new(options);
+    let mut scan_options = JxlDecoderOptions::default();
+    scan_options.scan_frames_only = true;
+    let mut scanner = JxlDecoder::new(scan_options);
     let mut input = bytes;
 
-    let basic_info = loop {
-        match decoder
+    // The scan parses headers and TOCs only (`scan_frames_only` skips section decoding), so
+    // `open` stays pixel-free while learning the true visible frame count up front.
+    let mut header: Option<(jxl::api::JxlBasicInfo, Option<Box<[u8]>>, WicPixelFormat)> = None;
+    loop {
+        match scanner
             .process(&mut input, None, None)
             .map_err(map_jxl_error)?
         {
             Event::BasicInfo => {
-                break decoder
-                    .basic_info()
-                    .cloned()
-                    .ok_or_else(|| DecodeError::InvalidBitstream("missing basic info".into()))?;
+                if header.is_none() {
+                    let basic_info = scanner.basic_info().cloned().ok_or_else(|| {
+                        DecodeError::InvalidBitstream("missing basic info".into())
+                    })?;
+                    let (width, height) = basic_info.size;
+                    validate_dimensions(width, height)?;
+                    let embedded_profile = scanner.embedded_color_profile();
+                    let format = select_format(&basic_info.bit_depth, embedded_profile);
+                    let color_profile = extract_color_profile(embedded_profile, &basic_info);
+                    header = Some((basic_info, color_profile, format));
+                }
             }
+            Event::Complete => break,
             Event::NeedMoreInput { .. } => {
                 return Err(DecodeError::InvalidBitstream(
-                    "truncated before the image header".to_string(),
+                    "truncated before the end of the frame headers".to_string(),
                 ));
             }
             _ => continue,
         }
-    };
+    }
+
+    let (basic_info, color_profile, format) =
+        header.ok_or_else(|| DecodeError::InvalidBitstream("missing basic info".into()))?;
+
+    let scans: Vec<ScannedFrame> = scanner
+        .scanned_frames()
+        .iter()
+        .map(|visible| ScannedFrame {
+            timing: FrameTiming {
+                duration_ticks: visible.duration_ticks,
+                duration_ms: visible.duration_ms,
+                is_keyframe: visible.is_keyframe,
+                is_last: visible.is_last,
+            },
+            seek_target: visible.seek_target,
+        })
+        .collect();
+    if scans.is_empty() {
+        return Err(DecodeError::InvalidBitstream(
+            "image contains no visible frames".to_string(),
+        ));
+    }
+    if scans.len() > MAX_FRAMES {
+        return Err(DecodeError::InvalidBitstream(format!(
+            "frame count {} exceeds the scan limit of {MAX_FRAMES}",
+            scans.len()
+        )));
+    }
+
+    let animation = basic_info.animation.clone().map(|upstream| AnimationInfo {
+        num_loops: upstream.num_loops,
+        tps_numerator: upstream.tps_numerator,
+        tps_denominator: upstream.tps_denominator,
+        have_timecodes: upstream.have_timecodes,
+    });
 
     let (width, height) = basic_info.size;
-    validate_dimensions(width, height)?;
-
-    let embedded_profile = decoder.embedded_color_profile();
-    let format = select_format(&basic_info.bit_depth, embedded_profile);
-    let color_profile = extract_color_profile(embedded_profile, &basic_info);
+    let info = FrameInfo {
+        width: width as u32,
+        height: height as u32,
+        dpi_x: DEFAULT_DPI,
+        dpi_y: DEFAULT_DPI,
+        pixel_format: format,
+    };
+    // Frame 0 of a still image (one visible frame, no animation header) keeps the legacy
+    // sequential decode; every other frame seeks directly to its decode start.
+    let sequential_first = animation.is_none() && scans.len() == 1;
+    let frames: Box<[FrameReadout]> = scans
+        .iter()
+        .enumerate()
+        .map(|(index, scan)| FrameReadout {
+            info: info.clone(),
+            color_profile: color_profile.clone(),
+            timing: scan.timing,
+            seek_target: if sequential_first && index == 0 {
+                None
+            } else {
+                Some(scan.seek_target)
+            },
+        })
+        .collect();
+    let rasters = (0..frames.len()).map(|_| OnceLock::new()).collect();
 
     Ok(JxlContainer {
-        info: ContainerInfo { frame_count: 1 },
-        bitstream: bytes.to_vec().into_boxed_slice(),
-        frame: FrameReadout {
-            info: FrameInfo {
-                width: width as u32,
-                height: height as u32,
-                dpi_x: DEFAULT_DPI,
-                dpi_y: DEFAULT_DPI,
-                pixel_format: format,
-            },
-            color_profile,
+        info: ContainerInfo {
+            frame_count: frames.len(),
         },
-        cached_raster: OnceLock::new(),
+        animation,
+        bitstream: bytes.to_vec().into_boxed_slice(),
+        frames,
+        rasters,
     })
 }
 
@@ -622,19 +767,158 @@ fn half_from_f32(value: f32) -> u16 {
     sign | half_exponent | half_mantissa
 }
 
-/// Runs a full decode of the first frame into a tightly packed raster, wrapped in panic containment.
-fn decode_raster(
+/// Runs a full decode of the frame described by `readout`, wrapped in panic containment.
+fn decode_raster_indexed(
     bytes: &[u8],
-    width: u32,
-    height: u32,
-    format: WicPixelFormat,
+    readout: &FrameReadout,
 ) -> Result<CachedRaster, DecodeError> {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        decode_raster_impl(bytes, width, height, format)
+        decode_raster_indexed_impl(bytes, readout)
     })) {
         Ok(result) => result,
         Err(payload) => Err(DecodeError::ParserPanic(panic_message(&*payload))),
     }
+}
+
+fn decode_raster_indexed_impl(
+    bytes: &[u8],
+    readout: &FrameReadout,
+) -> Result<CachedRaster, DecodeError> {
+    let info = &readout.info;
+    match readout.seek_target {
+        // Still images keep the original sequential decode bit-for-bit.
+        None => decode_raster_impl(bytes, info.width, info.height, info.pixel_format),
+        Some(seek_target) => decode_seek_raster_impl(
+            bytes,
+            info.width,
+            info.height,
+            info.pixel_format,
+            seek_target,
+        ),
+    }
+}
+
+/// Decodes one visible frame by seeking a fresh decoder to the frame's decode start.
+///
+/// The seek target comes from the container scan, so dependencies (reference frames, LF
+/// frames, patches) are reconstructed exactly as in a sequential decode; frames the target
+/// does not need are skipped without notification and produce no events.
+#[allow(clippy::field_reassign_with_default)]
+fn decode_seek_raster_impl(
+    bytes: &[u8],
+    width: u32,
+    height: u32,
+    format: WicPixelFormat,
+    seek_target: VisibleFrameSeekTarget,
+) -> Result<CachedRaster, DecodeError> {
+    let mut options = JxlDecoderOptions::default();
+    options.alpha_mode = jxl::api::AlphaMode::Unpremultiplied;
+    let mut decoder = JxlDecoder::new(options);
+    // One runner per decode, as before: `jxl-rs` only parallelises the frame rendering pass.
+    let mut runner = crate::parallel_runner::ThreadRunner::new();
+    let mut input = bytes;
+
+    // Image header only, then seek before any frame header is parsed. `BasicInfo` always
+    // precedes frame headers, so any other event here just keeps the loop moving.
+    let layout = OutputLayout::for_format(format);
+    loop {
+        match decoder
+            .process(&mut input, None, Some(&mut runner))
+            .map_err(map_jxl_error)?
+        {
+            Event::BasicInfo => {
+                let extra_channels = decoder
+                    .basic_info()
+                    .map_or(0, |info| info.extra_channels.len());
+                let pixel_format = layout.pixel_format(extra_channels);
+                decoder
+                    .set_pixel_format(pixel_format)
+                    .map_err(map_jxl_error)?;
+                break;
+            }
+            Event::NeedMoreInput { .. } => {
+                return Err(DecodeError::InvalidBitstream(
+                    "truncated before the image header".to_string(),
+                ));
+            }
+            Event::Complete => {
+                return Err(DecodeError::InvalidBitstream(
+                    "no visible frame to decode".to_string(),
+                ));
+            }
+            _ => continue,
+        }
+    }
+
+    let offset = decoder
+        .start_new_frame(seek_target)
+        .map_err(map_jxl_error)?;
+    let mut input: &[u8] = bytes
+        .get(offset as usize..)
+        .ok_or_else(|| {
+            DecodeError::InvalidBitstream(
+                "frame seek offset is beyond the end of input".to_string(),
+            )
+        })?;
+
+    // Skipped frames stay silent, so the first `FrameHeader` after the seek is the target.
+    loop {
+        match decoder
+            .process(&mut input, None, Some(&mut runner))
+            .map_err(map_jxl_error)?
+        {
+            Event::FrameHeader => break,
+            Event::FrameComplete { .. } => {
+                return Err(DecodeError::InvalidBitstream(
+                    "frame completed before its header".to_string(),
+                ));
+            }
+            Event::Complete => {
+                return Err(DecodeError::InvalidBitstream(
+                    "no visible frame to decode".to_string(),
+                ));
+            }
+            Event::NeedMoreInput { .. } => {
+                return Err(DecodeError::InvalidBitstream(
+                    "truncated frame data".to_string(),
+                ));
+            }
+            _ => continue,
+        }
+    }
+
+    let decode_row_bytes = layout.staging_bytes_per_pixel * width as usize;
+    let mut raster = AlignedRaster::zeroed(decode_row_bytes * height as usize);
+
+    let mut buffers = [JxlOutputBuffer::new(
+        raster.as_mut_slice(),
+        height as usize,
+        decode_row_bytes,
+    )];
+
+    loop {
+        match decoder
+            .process(&mut input, Some(&mut buffers), Some(&mut runner))
+            .map_err(map_jxl_error)?
+        {
+            Event::FrameComplete { .. } | Event::Complete => break,
+            Event::NeedMoreInput { .. } => {
+                return Err(DecodeError::InvalidBitstream(
+                    "truncated frame data".to_string(),
+                ));
+            }
+            _ => continue,
+        }
+    }
+
+    let decoded = raster.as_mut_slice();
+    let pixels = if format == WicPixelFormat::RgbaHalf64 {
+        narrow_to_half(decoded)
+    } else {
+        decoded.to_vec()
+    };
+
+    Ok(CachedRaster::new(width, height, format, pixels))
 }
 
 #[allow(clippy::field_reassign_with_default)]
@@ -968,6 +1252,29 @@ mod tests {
             profile,
             original.as_slice(),
             "embedded ICC must be returned verbatim"
+        );
+    }
+
+    #[test]
+    fn still_images_carry_no_animation_header() {
+        let container = open(&fixture("srgb8_lossless.jxl")).expect("open");
+        assert_eq!(container.frame_count(), 1);
+        assert_eq!(container.animation(), None);
+    }
+
+    #[test]
+    fn still_frame_zero_reports_still_timing() {
+        let container = open(&fixture("srgb8_lossless.jxl")).expect("open");
+        let frame = container.frame(0).expect("frame");
+        assert_eq!(frame.index(), 0);
+        assert_eq!(
+            frame.timing(),
+            &FrameTiming {
+                duration_ticks: 0,
+                duration_ms: 0.0,
+                is_keyframe: true,
+                is_last: true,
+            }
         );
     }
 
