@@ -323,6 +323,7 @@ struct FrameReadout {
 ///
 /// Encapsulates container and frame metadata, bitstream bytes, and a lazily decoded
 /// in-memory [`CachedRaster`] behind a concrete pure-Rust interface free of COM and Win32 types.
+#[derive(Debug)]
 pub struct JxlContainer {
     info: ContainerInfo,
     bitstream: Box<[u8]>,
@@ -690,8 +691,8 @@ fn decode_raster_impl(
     loop {
         let event = decoder
             .process(&mut input, None, Some(&mut runner))
-            .map_err(map_jxl_error)?
-        {
+            .map_err(map_jxl_error)?;
+        match event {
             Event::BasicInfo => {
                 let extra_channels = decoder
                     .basic_info()
