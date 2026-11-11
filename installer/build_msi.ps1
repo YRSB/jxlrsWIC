@@ -24,10 +24,21 @@ if ((Test-Path $dotnetTools) -and ($env:PATH -notlike "*$dotnetTools*")) {
     $env:PATH = "$dotnetTools;$env:PATH"
 }
 
-# Ensure WiX v4+ tool is installed
-if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {
-    Write-Host "WiX CLI not found. Installing WiX toolset via dotnet tool..."
-    dotnet tool install --global wix
+# Ensure WiX v4 tool is installed
+$needInstall = $true
+if (Get-Command wix -ErrorAction SilentlyContinue) {
+    $currentVer = (& wix --version 2>&1) -join " "
+    if ($currentVer -like "4.*") {
+        $needInstall = $false
+    } else {
+        Write-Host "Current WiX ($currentVer) is not v4. Uninstalling..."
+        dotnet tool uninstall --global wix
+    }
+}
+
+if ($needInstall) {
+    Write-Host "Installing WiX v4.0.6 via dotnet tool..."
+    dotnet tool install --global wix --version 4.0.6
     if ((Test-Path $dotnetTools) -and ($env:PATH -notlike "*$dotnetTools*")) {
         $env:PATH = "$dotnetTools;$env:PATH"
     }
