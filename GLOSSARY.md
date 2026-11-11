@@ -17,5 +17,5 @@ The WIC representation (`IWICBitmapFrameDecode`) of an individual image frame pr
 _Avoid_: Sub-image, page, layer
 
 **Cached Raster**:
-The decoded in-memory pixel buffer owned by a Frame Decode, used to serve subsequent `CopyPixels` requests without re-decoding the underlying bitstream.
+The decoded in-memory pixel buffer managed behind the Decoder Seam, used to serve subsequent `CopyPixels` requests without re-decoding the underlying bitstream.
 _Avoid_: Frame buffer, pixel cache, decoded cache
