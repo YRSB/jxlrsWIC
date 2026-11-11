@@ -211,21 +211,6 @@ impl CachedRaster {
     }
 
     #[cfg(test)]
-    fn width(&self) -> u32 {
-        self.width
-    }
-
-    #[cfg(test)]
-    fn height(&self) -> u32 {
-        self.height
-    }
-
-    #[cfg(test)]
-    fn format(&self) -> WicPixelFormat {
-        self.format
-    }
-
-    #[cfg(test)]
     fn bytes(&self) -> &[u8] {
         &self.bytes
     }
