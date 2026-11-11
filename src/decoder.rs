@@ -5,20 +5,23 @@
 //! surface stays a thin, auditable adapter.
 
 use std::ffi::c_void;
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
-use windows::core::{implement, Interface, Result, GUID, HRESULT};
-use windows::Win32::Foundation::{E_INVALIDARG, E_POINTER, E_UNEXPECTED};
+use windows::core::{implement, Interface, Result, GUID, HRESULT, PCWSTR, PROPVARIANT, PWSTR};
+use windows::Win32::Foundation::{
+    E_INVALIDARG, E_OUTOFMEMORY, E_POINTER, E_UNEXPECTED, S_FALSE, S_OK,
+};
 use windows::Win32::Graphics::Imaging::{
     IWICBitmapDecoder, IWICBitmapDecoderInfo, IWICBitmapDecoder_Impl, IWICBitmapFrameDecode,
     IWICBitmapFrameDecode_Impl, IWICBitmapSource, IWICBitmapSource_Impl, IWICColorContext,
-    IWICColorContext_Impl, IWICImagingFactory, IWICMetadataQueryReader, IWICPalette,
+    IWICColorContext_Impl, IWICImagingFactory, IWICMetadataQueryReader,
+    IWICMetadataQueryReader_Impl, IWICPalette,
     WICBitmapDecoderCapabilityCanDecodeAllImages, WICColorContextProfile, WICDecodeOptions,
     WICRect,
 };
 use windows::Win32::System::Com::{
-    CoCreateInstance, IStream, CLSCTX_INPROC_SERVER, STATFLAG_NONAME, STREAM_SEEK_CUR,
-    STREAM_SEEK_SET,
+    CLSCTX_INPROC_SERVER, CoCreateInstance, CoTaskMemAlloc, IEnumString, IEnumString_Impl,
+    IStream, STATFLAG_NONAME, STREAM_SEEK_CUR, STREAM_SEEK_SET,
 };
 
 use crate::decoder_seam::{
@@ -41,6 +44,8 @@ const WINCODEC_ERR_INSUFFICIENTBUFFER: HRESULT = HRESULT(0x88982F8C_u32 as i32);
 const WINCODEC_ERR_PALETTEUNAVAILABLE: HRESULT = HRESULT(0x88982F45_u32 as i32);
 /// WIC error raised for unsupported operations, including missing previews.
 const WINCODEC_ERR_UNSUPPORTEDOPERATION: HRESULT = HRESULT(0x88982F81_u32 as i32);
+/// WIC error raised when a metadata query names a property the decoder does not carry.
+const WINCODEC_ERR_PROPERTYNOTFOUND: HRESULT = HRESULT(0x88982F40_u32 as i32);
 /// WIC error raised when the decoder carries no embedded thumbnail.
 const WINCODEC_ERR_CODECNOTHUMBNAIL: HRESULT = HRESULT(0x88982F44_u32 as i32);
 
@@ -79,7 +84,7 @@ unsafe fn ingest_stream(stream: &IStream) -> Result<Vec<u8>> {
     let mut start = 0u64;
     stream.Seek(0, STREAM_SEEK_SET, Some(&mut start))?;
 
-    let mut stat = std::mem::zeroed();
+    let stat = std::mem::zeroed();
     let sized = stream.Stat(&mut stat, STATFLAG_NONAME).is_ok() && stat.cbSize > 0;
     let length = if sized { stat.cbSize } else { 0u64 };
     ensure_within_stream_limit(length)?;
@@ -259,6 +264,322 @@ fn pixel_format_guid(format: WicPixelFormat) -> GUID {
     }
 }
 
+/// Frame-level metadata path reporting the frame delay in GIF-compatible centiseconds
+/// (`VT_UI2`).
+const FRAME_DELAY_PATH: &str = "/grctlext/Delay";
+/// Decoder-level metadata path identifying the application extension.
+const APP_EXTENSION_PATH: &str = "/appext/application";
+/// Decoder-level metadata path carrying the loop count as a decimal `VT_LPWSTR` string.
+const APP_DATA_PATH: &str = "/appext/data";
+/// Application identifier reported through [`APP_EXTENSION_PATH`], matching the GIF
+/// `NETSCAPE2.0` extension whose loop-count semantics (0 = loop forever) JXL shares.
+const NETSCAPE_APPLICATION_ID: &str = "NETSCAPE2.0";
+
+/// Converts a scan duration in milliseconds to the GIF-compatible `VT_UI2` centisecond delay.
+///
+/// Rounds to the nearest centisecond and saturates at `u16::MAX`; non-positive or non-finite
+/// durations report zero ("no delay specified").
+fn delay_centiseconds(duration_ms: f64) -> u16 {
+    if !duration_ms.is_finite() || duration_ms <= 0.0 {
+        return 0;
+    }
+    (duration_ms / 10.0).round().clamp(0.0, f64::from(u16::MAX)) as u16
+}
+
+/// Formats the animation loop count for [`APP_DATA_PATH`]: decimal, saturating at `u16::MAX`.
+/// Zero passes through and means "loop forever", matching the GIF `NETSCAPE2.0` semantics.
+fn loop_count_text(num_loops: u32) -> String {
+    num_loops.min(u32::from(u16::MAX)).to_string()
+}
+
+/// Encodes `text` as NUL-terminated UTF-16 for [`IEnumString`] output.
+fn wide_nul(text: &str) -> Vec<u16> {
+    text.encode_utf16().chain([0]).collect()
+}
+
+/// Reads a metadata query name. Returns `None` for null or non-UTF-16 input so unknown names
+/// degrade to `WINCODEC_ERR_PROPERTYNOTFOUND` instead of panicking across COM.
+///
+/// # Safety
+///
+/// The caller must guarantee `wzname` is either null or points at a readable NUL-terminated
+/// UTF-16 string, which is exactly what the WIC query-reader contract promises.
+unsafe fn read_query_name(wzname: &PCWSTR) -> Option<String> {
+    if wzname.is_null() {
+        return None;
+    }
+    unsafe { wzname.to_string().ok() }
+}
+
+/// Writes a looked-up metadata value into the caller's `PROPVARIANT` slot.
+///
+/// A missing value surfaces as `WINCODEC_ERR_PROPERTYNOTFOUND`, following the WIC query
+/// protocol; this is not a decode failure, so [`to_hresult`] stays untouched.
+fn write_metadata_value(value: Option<PROPVARIANT>, pvarvalue: *mut PROPVARIANT) -> Result<()> {
+    if pvarvalue.is_null() {
+        return Err(E_POINTER.into());
+    }
+    let value = value.ok_or(WINCODEC_ERR_PROPERTYNOTFOUND)?;
+    // SAFETY: non-null per the check above; `ptr::write` initialises without dropping because
+    // the slot arrives uninitialised from the caller.
+    unsafe {
+        std::ptr::write(pvarvalue, value);
+    }
+    Ok(())
+}
+
+/// Answers `GetLocation` for both metadata readers: every served path lives at the root.
+fn reader_location(
+    cchmaxlength: u32,
+    wznamespace: &PWSTR,
+    pcchactuallength: *mut u32,
+) -> Result<()> {
+    // The only location served is the root namespace: the empty string plus its NUL.
+    const NEEDED: u32 = 1;
+    if !pcchactuallength.is_null() {
+        // SAFETY: the caller promised a writable `u32` slot.
+        unsafe {
+            *pcchactuallength = NEEDED;
+        }
+    }
+    if cchmaxlength > 0 && !wznamespace.as_ptr().is_null() {
+        // SAFETY: the caller promised at least `cchmaxlength` writable UTF-16 units, and
+        // `cchmaxlength > 0` guarantees room for the single NUL written here.
+        unsafe {
+            *wznamespace.as_ptr() = 0;
+        }
+    }
+    Ok(())
+}
+
+/// `IWICMetadataQueryReader` serving the GIF-compatible application-extension entries of an
+/// animated container: [`APP_EXTENSION_PATH`] and [`APP_DATA_PATH`] (`NETSCAPE2.0` loop count).
+///
+/// Only constructed for containers whose [`JxlContainer::animation`] header is present; still
+/// images keep the legacy `WINCODEC_ERR_UNSUPPORTEDOPERATION` from `GetMetadataQueryReader`.
+#[implement(IWICMetadataQueryReader)]
+struct JxlDecoderMetadataReader {
+    /// Container holding the animation header.
+    container: Arc<JxlContainer>,
+}
+
+impl JxlDecoderMetadataReader {
+    /// Wraps the animation header of an already-gated container.
+    fn new(container: Arc<JxlContainer>) -> Self {
+        Self { container }
+    }
+
+    /// Resolves one query path to its value. `None` means "not carried" and surfaces as
+    /// `WINCODEC_ERR_PROPERTYNOTFOUND`.
+    fn lookup(&self, name: &str) -> Option<PROPVARIANT> {
+        let animation = self.container.animation()?;
+        if name == APP_EXTENSION_PATH {
+            Some(PROPVARIANT::from(NETSCAPE_APPLICATION_ID))
+        } else if name == APP_DATA_PATH {
+            Some(PROPVARIANT::from(loop_count_text(animation.num_loops).as_str()))
+        } else {
+            None
+        }
+    }
+}
+
+impl IWICMetadataQueryReader_Impl for JxlDecoderMetadataReader_Impl {
+    fn GetContainerFormat(&self) -> Result<GUID> {
+        Ok(GUID_ContainerFormatJxl)
+    }
+
+    fn GetLocation(
+        &self,
+        cchmaxlength: u32,
+        wznamespace: &PWSTR,
+        pcchactuallength: *mut u32,
+    ) -> Result<()> {
+        reader_location(cchmaxlength, wznamespace, pcchactuallength)
+    }
+
+    fn GetMetadataByName(&self, wzname: &PCWSTR, pvarvalue: *mut PROPVARIANT) -> Result<()> {
+        // SAFETY: `wzname` obeys the WIC query-reader contract (null or NUL-terminated UTF-16).
+        let name = unsafe { read_query_name(wzname) }.ok_or(WINCODEC_ERR_PROPERTYNOTFOUND)?;
+        write_metadata_value(self.lookup(&name), pvarvalue)
+    }
+
+    fn GetEnumerator(&self) -> Result<IEnumString> {
+        Ok(JxlPathEnumerator::new(vec![
+            wide_nul(APP_EXTENSION_PATH),
+            wide_nul(APP_DATA_PATH),
+        ])
+        .into())
+    }
+}
+
+/// `IWICMetadataQueryReader` serving one animated frame's [`FRAME_DELAY_PATH`] entry (`VT_UI2`
+/// centiseconds, converted from the scan's millisecond duration).
+///
+/// Only constructed when the container holds more than one frame; still images keep the legacy
+/// `WINCODEC_ERR_UNSUPPORTEDOPERATION` from `GetMetadataQueryReader`.
+#[implement(IWICMetadataQueryReader)]
+struct JxlFrameMetadataReader {
+    /// Container holding the frame timing.
+    container: Arc<JxlContainer>,
+    /// Zero-based index of the frame this reader describes.
+    index: usize,
+}
+
+impl JxlFrameMetadataReader {
+    /// Wraps one frame of an already-gated container.
+    fn new(container: Arc<JxlContainer>, index: usize) -> Self {
+        Self { container, index }
+    }
+
+    /// Resolves one query path to its value. `None` means "not carried" and surfaces as
+    /// `WINCODEC_ERR_PROPERTYNOTFOUND`.
+    fn lookup(&self, name: &str) -> Option<PROPVARIANT> {
+        if name != FRAME_DELAY_PATH || self.container.frame_count() <= 1 {
+            return None;
+        }
+        let frame = self.container.frame(self.index).ok()?;
+        Some(PROPVARIANT::from(delay_centiseconds(frame.timing().duration_ms)))
+    }
+}
+
+impl IWICMetadataQueryReader_Impl for JxlFrameMetadataReader_Impl {
+    fn GetContainerFormat(&self) -> Result<GUID> {
+        Ok(GUID_ContainerFormatJxl)
+    }
+
+    fn GetLocation(
+        &self,
+        cchmaxlength: u32,
+        wznamespace: &PWSTR,
+        pcchactuallength: *mut u32,
+    ) -> Result<()> {
+        reader_location(cchmaxlength, wznamespace, pcchactuallength)
+    }
+
+    fn GetMetadataByName(&self, wzname: &PCWSTR, pvarvalue: *mut PROPVARIANT) -> Result<()> {
+        // SAFETY: `wzname` obeys the WIC query-reader contract (null or NUL-terminated UTF-16).
+        let name = unsafe { read_query_name(wzname) }.ok_or(WINCODEC_ERR_PROPERTYNOTFOUND)?;
+        write_metadata_value(self.lookup(&name), pvarvalue)
+    }
+
+    fn GetEnumerator(&self) -> Result<IEnumString> {
+        Ok(JxlPathEnumerator::new(vec![wide_nul(FRAME_DELAY_PATH)]).into())
+    }
+}
+
+/// `IEnumString` over the fixed path list of one metadata reader.
+///
+/// Paths are stored NUL-terminated so `Next` can copy them straight into `CoTaskMemAlloc`
+/// buffers, which the caller frees with `CoTaskMemFree` per the COM contract.
+#[implement(IEnumString)]
+struct JxlPathEnumerator {
+    /// Served paths as NUL-terminated UTF-16 strings.
+    paths: Vec<Vec<u16>>,
+    /// Index of the next path `Next` will return.
+    cursor: Mutex<usize>,
+}
+
+impl JxlPathEnumerator {
+    /// Builds an enumerator positioned before the first path.
+    fn new(paths: Vec<Vec<u16>>) -> Self {
+        Self {
+            paths,
+            cursor: Mutex::new(0),
+        }
+    }
+
+    /// Builds an enumerator resumed at `cursor` (for `Clone`); out-of-range positions clamp
+    /// to the end so a poisoned or stale cursor reports `S_FALSE` instead of panicking.
+    fn with_position(paths: Vec<Vec<u16>>, cursor: usize) -> Self {
+        let cursor = cursor.min(paths.len());
+        Self {
+            paths,
+            cursor: Mutex::new(cursor),
+        }
+    }
+}
+
+impl IEnumString_Impl for JxlPathEnumerator_Impl {
+    fn Next(&self, celt: u32, rgelt: *mut PWSTR, pceltfetched: *mut u32) -> HRESULT {
+        if celt > 0 && rgelt.is_null() {
+            return E_POINTER;
+        }
+        let mut cursor = match self.cursor.lock() {
+            Ok(cursor) => cursor,
+            Err(_) => return E_UNEXPECTED,
+        };
+        let mut fetched = 0u32;
+        while fetched < celt {
+            let Some(path) = self.paths.get(*cursor + fetched as usize) else {
+                break;
+            };
+            // SAFETY: `CoTaskMemAlloc` returns suitably aligned memory the caller frees with
+            // `CoTaskMemFree`; the buffer holds exactly the NUL-terminated path.
+            let mem = unsafe { CoTaskMemAlloc(path.len() * std::mem::size_of::<u16>()) };
+            if mem.is_null() {
+                if !pceltfetched.is_null() {
+                    // SAFETY: the caller promised a writable `u32` slot.
+                    unsafe {
+                        *pceltfetched = fetched;
+                    }
+                }
+                return E_OUTOFMEMORY;
+            }
+            // SAFETY: `mem` is non-null with room for the whole path, and `rgelt` holds at
+            // least `celt` writable slots per the `IEnumString` contract.
+            unsafe {
+                mem.cast::<u16>()
+                    .copy_from_nonoverlapping(path.as_ptr(), path.len());
+                rgelt.add(fetched as usize).write(PWSTR(mem.cast()));
+            }
+            fetched += 1;
+        }
+        *cursor += fetched as usize;
+        if !pceltfetched.is_null() {
+            // SAFETY: the caller promised a writable `u32` slot.
+            unsafe {
+                *pceltfetched = fetched;
+            }
+        }
+        if fetched == celt {
+            S_OK
+        } else {
+            S_FALSE
+        }
+    }
+
+    fn Skip(&self, celt: u32) -> HRESULT {
+        let mut cursor = match self.cursor.lock() {
+            Ok(cursor) => cursor,
+            Err(_) => return E_UNEXPECTED,
+        };
+        let advance = (celt as usize).min(self.paths.len().saturating_sub(*cursor));
+        *cursor += advance;
+        if advance == celt as usize {
+            S_OK
+        } else {
+            S_FALSE
+        }
+    }
+
+    fn Reset(&self) -> Result<()> {
+        let mut cursor = self
+            .cursor
+            .lock()
+            .map_err(|_| windows::core::Error::from(E_UNEXPECTED))?;
+        *cursor = 0;
+        Ok(())
+    }
+
+    fn Clone(&self) -> Result<IEnumString> {
+        let cursor = self
+            .cursor
+            .lock()
+            .map_err(|_| windows::core::Error::from(E_UNEXPECTED))?;
+        Ok(JxlPathEnumerator::with_position(self.paths.clone(), *cursor).into())
+    }
+}
+
 /// WIC bitmap frame decoder backed by a concrete JPEG XL container.
 ///
 /// Crate-private: hosts see it only through the IWICBitmapFrameDecode interface, and the
@@ -267,17 +588,19 @@ fn pixel_format_guid(format: WicPixelFormat) -> GUID {
 pub(crate) struct JxlFrameDecode {
     /// Container holding the decoded frame.
     container: Arc<JxlContainer>,
+    /// Zero-based index of the frame this wrapper decodes.
+    index: usize,
 }
 
 impl JxlFrameDecode {
-    /// Wraps a decoded frame from the container.
-    pub(crate) fn new(container: Arc<JxlContainer>) -> Self {
-        Self { container }
+    /// Wraps one frame of the container; the index was validated by `GetFrame`.
+    pub(crate) fn new(container: Arc<JxlContainer>, index: usize) -> Self {
+        Self { container, index }
     }
 
     fn frame(&self) -> Result<JxlFrame<'_>> {
         self.container
-            .frame(0)
+            .frame(self.index)
             .map_err(|err| windows::core::Error::from(to_hresult(&err)))
     }
 }
@@ -357,7 +680,13 @@ impl IWICBitmapSource_Impl for JxlFrameDecode_Impl {
 
 impl IWICBitmapFrameDecode_Impl for JxlFrameDecode_Impl {
     fn GetMetadataQueryReader(&self) -> Result<IWICMetadataQueryReader> {
-        Err(WINCODEC_ERR_UNSUPPORTEDOPERATION.into())
+        // Validates the stored index so a stale wrapper reports FRAMEMISSING, not metadata.
+        self.frame()?;
+        if self.container.frame_count() <= 1 {
+            // Still images carry no frame metadata; the e2e suite pins this error.
+            return Err(WINCODEC_ERR_UNSUPPORTEDOPERATION.into());
+        }
+        Ok(JxlFrameMetadataReader::new(self.container.clone(), self.index).into())
     }
 
     fn GetColorContexts(
@@ -470,7 +799,13 @@ impl IWICBitmapDecoder_Impl for JxlWicDecoder_Impl {
     }
 
     fn GetMetadataQueryReader(&self) -> Result<IWICMetadataQueryReader> {
-        Err(WINCODEC_ERR_UNSUPPORTEDOPERATION.into())
+        let container = self.container()?;
+        if container.animation().is_none() {
+            // Still images carry no animation header, so there is no loop metadata to serve;
+            // the e2e suite pins this error.
+            return Err(WINCODEC_ERR_UNSUPPORTEDOPERATION.into());
+        }
+        Ok(JxlDecoderMetadataReader::new(container).into())
     }
 
     fn GetPreview(&self) -> Result<IWICBitmapSource> {
@@ -512,7 +847,7 @@ impl IWICBitmapDecoder_Impl for JxlWicDecoder_Impl {
         let _ = container
             .frame(index as usize)
             .map_err(|err| windows::core::Error::from(to_hresult(&err)))?;
-        let decode: IWICBitmapFrameDecode = JxlFrameDecode::new(container).into();
+        let decode: IWICBitmapFrameDecode = JxlFrameDecode::new(container, index as usize).into();
         Ok(decode)
     }
 }
@@ -589,5 +924,37 @@ mod tests {
             }),
             WINCODEC_ERR_FRAMEMISSING
         );
+    }
+
+    #[test]
+    fn converts_durations_to_centisecond_delays() {
+        assert_eq!(delay_centiseconds(0.0), 0);
+        assert_eq!(delay_centiseconds(-3.0), 0);
+        assert_eq!(delay_centiseconds(f64::NAN), 0);
+        assert_eq!(delay_centiseconds(100.0), 10);
+        assert_eq!(delay_centiseconds(105.0), 11);
+        assert_eq!(delay_centiseconds(14.9), 1);
+        assert_eq!(delay_centiseconds(1.0e9), u16::MAX);
+    }
+
+    #[test]
+    fn formats_loop_counts_as_decimal_text() {
+        assert_eq!(loop_count_text(0), "0");
+        assert_eq!(loop_count_text(3), "3");
+        assert_eq!(loop_count_text(u32::MAX), u16::MAX.to_string());
+    }
+
+    #[test]
+    fn encodes_enumerator_paths_as_nul_terminated_utf16() {
+        assert_eq!(wide_nul("AB"), vec![65, 66, 0]);
+        assert_eq!(wide_nul(FRAME_DELAY_PATH).last(), Some(&0));
+    }
+
+    #[test]
+    fn reads_well_formed_query_names() {
+        assert!(unsafe { read_query_name(&PCWSTR::null()) }.is_none());
+        let wide = wide_nul(FRAME_DELAY_PATH);
+        let queried = unsafe { read_query_name(&PCWSTR(wide.as_ptr())) };
+        assert_eq!(queried.as_deref(), Some(FRAME_DELAY_PATH));
     }
 }
