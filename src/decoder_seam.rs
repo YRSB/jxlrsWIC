@@ -445,14 +445,20 @@ impl JxlContainer {
 
     /// Decodes (once per frame) and returns a reference to the full raster of frame `index`.
     fn frame_raster(&self, index: usize) -> Result<&CachedRaster, DecodeError> {
-        let readout = self.frames.get(index).ok_or(DecodeError::FrameIndexOutOfRange {
-            index,
-            frame_count: self.info.frame_count,
-        })?;
-        let slot = self.rasters.get(index).ok_or(DecodeError::FrameIndexOutOfRange {
-            index,
-            frame_count: self.info.frame_count,
-        })?;
+        let readout = self
+            .frames
+            .get(index)
+            .ok_or(DecodeError::FrameIndexOutOfRange {
+                index,
+                frame_count: self.info.frame_count,
+            })?;
+        let slot = self
+            .rasters
+            .get(index)
+            .ok_or(DecodeError::FrameIndexOutOfRange {
+                index,
+                frame_count: self.info.frame_count,
+            })?;
         match slot.get_or_init(|| decode_raster_indexed(&self.bitstream, readout)) {
             Ok(raster) => Ok(raster),
             Err(err) => Err(err.clone()),
@@ -488,7 +494,9 @@ impl<'a> JxlFrame<'a> {
         stride: usize,
         out: &mut [u8],
     ) -> Result<(), DecodeError> {
-        self.container.frame_raster(self.index)?.blit(rect, stride, out)
+        self.container
+            .frame_raster(self.index)?
+            .blit(rect, stride, out)
     }
 }
 
@@ -853,13 +861,9 @@ fn decode_seek_raster_impl(
     let offset = decoder
         .start_new_frame(seek_target)
         .map_err(map_jxl_error)?;
-    let mut input: &[u8] = bytes
-        .get(offset as usize..)
-        .ok_or_else(|| {
-            DecodeError::InvalidBitstream(
-                "frame seek offset is beyond the end of input".to_string(),
-            )
-        })?;
+    let mut input: &[u8] = bytes.get(offset as usize..).ok_or_else(|| {
+        DecodeError::InvalidBitstream("frame seek offset is beyond the end of input".to_string())
+    })?;
 
     // Skipped frames stay silent, so the first `FrameHeader` after the seek is the target.
     loop {
