@@ -20,7 +20,7 @@ if (-not (Test-Path $resolvedDll)) {
 
 # Ensure .dotnet tools is on PATH
 $dotnetTools = Join-Path $env:USERPROFILE ".dotnet\tools"
-if (Test-Path $dotnetTools -and $env:PATH -notlike "*$dotnetTools*") {
+if ((Test-Path $dotnetTools) -and ($env:PATH -notlike "*$dotnetTools*")) {
     $env:PATH = "$dotnetTools;$env:PATH"
 }
 
@@ -28,7 +28,7 @@ if (Test-Path $dotnetTools -and $env:PATH -notlike "*$dotnetTools*") {
 if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {
     Write-Host "WiX CLI not found. Installing WiX toolset via dotnet tool..."
     dotnet tool install --global wix
-    if (Test-Path $dotnetTools -and $env:PATH -notlike "*$dotnetTools*") {
+    if ((Test-Path $dotnetTools) -and ($env:PATH -notlike "*$dotnetTools*")) {
         $env:PATH = "$dotnetTools;$env:PATH"
     }
 }
